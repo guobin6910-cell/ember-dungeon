@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import { PLAYER_R } from './Player.js';
+import { state } from '../state.js';
+import { getDifficulty } from '../systems/difficulty.js';
 
 export const ENEMY_TYPES = {
   skeleton: {
@@ -54,10 +56,11 @@ export default class Enemy {
     this.T = T;
     this.lvl = lvl;
     this.isDummy = !!T.isDummy;
-    this.maxHp = this.isDummy ? T.hp : Math.round(T.hp * (1 + (lvl - 1) * 0.22));
+    const diff = getDifficulty(state.difficulty);
+    this.maxHp = this.isDummy ? T.hp : Math.max(1, Math.round(T.hp * (1 + (lvl - 1) * 0.22) * diff.hpMul));
     this.hp = this.maxHp;
-    this.dmg = Math.round(T.dmg * (1 + (lvl - 1) * 0.14));
-    this.xp = Math.round(T.xp * (1 + (lvl - 1) * 0.2));
+    this.dmg = this.isDummy ? 0 : Math.max(1, Math.round(T.dmg * (1 + (lvl - 1) * 0.14) * diff.dmgMul));
+    this.xp = this.isDummy ? 0 : Math.max(1, Math.round(T.xp * (1 + (lvl - 1) * 0.2) * diff.xpMul));
     this.speed = T.speed;
 
     this.shadow = scene.add.image(x, y, 'shadowtex').setScale(T.r / 13, T.r / 34).setDepth(2);
@@ -77,6 +80,7 @@ export default class Enemy {
     this.sprite.enemy = this;
 
     this.aggro = false;
+    this.aggroDist = T.aggroDist || 330;
     this.atkT = rand(200, 900);
     this.webT = T.webCd ? rand(1000, T.webCd) : 0;
     this.summonT = T.summonCd ? rand(2500, T.summonCd) : 0;
@@ -182,9 +186,10 @@ export default class Enemy {
     const gap = dist - T.r - PLAYER_R;
 
     if (!this.aggro) {
-      if (!p.dead && dist < 330 && sc.dungeon.lineClear(this.fx, this.fy, p.fx, p.fy)) this.aggro = true;
+      if (!p.dead && dist < (this.aggroDist || 330) && sc.dungeon.lineClear(this.fx, this.fy, p.fx, p.fy)) this.aggro = true;
     } else if (dist > 1000 || p.dead) {
       this.aggro = false;
+      this.aggroDist = T.aggroDist || 330;
     }
 
     // 潛行透明效果

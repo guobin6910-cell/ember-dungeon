@@ -1,6 +1,7 @@
-import { state, resetState, getStats, SLOTS } from '../state.js';
+import { state, resetState, getStats, SLOTS, defaultTutorial } from '../state.js';
 import { emptyRunePouch } from './runes.js';
 import { syncNextItemId } from './items.js';
+import { DEFAULT_DIFFICULTY, getDifficulty } from './difficulty.js';
 
 export const SAVE_KEY = 'ember_dungeon_save_v1';
 
@@ -10,10 +11,12 @@ export function saveGame() {
       v: 1,
       savedAt: Date.now(),
       elapsedMs: Math.max(0, Date.now() - (state.startTime || Date.now())),
+      difficulty: state.difficulty || DEFAULT_DIFFICULTY,
       level: state.level,
       xp: state.xp,
       gold: state.gold,
       shards: state.shards,
+      setEssence: state.setEssence || 0,
       kills: state.kills,
       points: state.points,
       maxFloor: state.maxFloor,
@@ -24,6 +27,7 @@ export function saveGame() {
       skillLevels: state.skillLevels,
       skillBar: state.skillBar,
       runes: state.runes,
+      tutorial: state.tutorial,
     };
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(payload));
     return true;
@@ -39,6 +43,7 @@ export function getSaveMeta() {
     const data = JSON.parse(raw);
     if (!data || data.v !== 1 || typeof data.level !== 'number') return null;
     return {
+      difficulty: getDifficulty(data.difficulty).id,
       level: data.level,
       maxFloor: data.maxFloor || 1,
       clearedFloors: data.clearedFloors || 0,
@@ -58,11 +63,12 @@ export function loadGame() {
     const data = JSON.parse(raw);
     if (!data || data.v !== 1 || typeof data.level !== 'number') return false;
 
-    resetState();
+    resetState(data.difficulty || DEFAULT_DIFFICULTY);
     state.level = Math.max(1, data.level);
     state.xp = Math.max(0, data.xp || 0);
     state.gold = Math.max(0, data.gold || 0);
     state.shards = Math.max(0, data.shards || 0);
+    state.setEssence = Math.max(0, data.setEssence || 0);
     state.kills = Math.max(0, data.kills || 0);
     state.points = Math.max(0, data.points || 0);
     state.maxFloor = Math.max(1, data.maxFloor || 1);
@@ -87,6 +93,11 @@ export function loadGame() {
       state.skillBar = Array.from({ length: 5 }, (_, i) => data.skillBar[i] || null);
     }
     state.runes = { ...emptyRunePouch(), ...(data.runes || {}) };
+    if (data.tutorial && typeof data.tutorial === 'object') {
+      state.tutorial = { ...defaultTutorial(), ...data.tutorial };
+    } else if (state.level > 1 || state.clearedFloors > 0) {
+      state.tutorial = { dummyDone: true, smithDone: true, enteredDungeon: true, firstLootDone: true, firstLevelDone: true, dismissed: false };
+    }
 
     let maxId = 0;
     for (const it of state.inventory) if (it && it.id > maxId) maxId = it.id;

@@ -11,6 +11,9 @@ export default class Player {
     this.sprite.body.setCircle(PLAYER_R, 18 - PLAYER_R, 24 + PLAYER_FOOT - PLAYER_R);
     this.sword = scene.add.image(x, y, 'sword').setOrigin(0.5, 0.82);
     this.path = [];
+    this.joyVec = { x: 0, y: 0 };
+    this.keyVec = { x: 0, y: 0 };
+    this.lastMoveAngle = 0;
     this.speed = 190;
     this.facing = 1;
     this.walkT = 0;
@@ -25,6 +28,8 @@ export default class Player {
     this.hurtFlashT = 0;
     this._wasSlow = false;
     this.stuckT = 0;
+    this.repathedOnStuck = false;
+    this.onStuck = null;
     this.lastPos = { x, y };
     this.dead = false;
   }
@@ -32,9 +37,47 @@ export default class Player {
   get fx() { return this.sprite.x; }
   get fy() { return this.sprite.y + PLAYER_FOOT; }
 
-  setPath(pts) { this.path = pts || []; this.stuckT = 0; }
+  setPath(pts) {
+    this.path = pts || [];
+    this.stuckT = 0;
+    this.repathedOnStuck = false;
+  }
+  setMoveVector(vx, vy) {
+    const len = Math.hypot(vx, vy);
+    if (len < 0.08) {
+      this.joyVec.x = 0;
+      this.joyVec.y = 0;
+      return;
+    }
+    const clamp = Math.min(1, len);
+    this.joyVec.x = (vx / len) * clamp;
+    this.joyVec.y = (vy / len) * clamp;
+    this.lastMoveAngle = Math.atan2(this.joyVec.y, this.joyVec.x);
+    this.path = [];
+    this.stuckT = 0;
+  }
+  setKeyVector(vx, vy) {
+    const len = Math.hypot(vx, vy);
+    if (len < 0.08) {
+      this.keyVec.x = 0;
+      this.keyVec.y = 0;
+      return;
+    }
+    this.keyVec.x = vx / len;
+    this.keyVec.y = vy / len;
+    this.lastMoveAngle = Math.atan2(this.keyVec.y, this.keyVec.x);
+    this.path = [];
+    this.stuckT = 0;
+  }
+  clearJoystick() { this.joyVec.x = 0; this.joyVec.y = 0; }
+  clearMoveInputs() { this.joyVec.x = 0; this.joyVec.y = 0; this.keyVec.x = 0; this.keyVec.y = 0; }
   stop() { this.path = []; this.sprite.body.setVelocity(0, 0); }
-  get moving() { return this.path.length > 0; }
+  get manualVec() {
+    if (Math.hypot(this.joyVec.x, this.joyVec.y) > 0.08) return this.joyVec;
+    if (Math.hypot(this.keyVec.x, this.keyVec.y) > 0.08) return this.keyVec;
+    return null;
+  }
+  get moving() { return this.path.length > 0 || !!this.manualVec; }
 
   applySlow(ms) {
     this.slowT = Math.max(this.slowT, ms);
@@ -91,6 +134,7 @@ export default class Player {
 
     if (this.dead) { body.setVelocity(0, 0); return; }
 
+    const mVec = this.manualVec;
     if (this.dodge) {
       this.dodge.t += dt;
       body.setVelocity(this.dodge.vx, this.dodge.vy);
@@ -111,24 +155,73 @@ export default class Player {
         this.dash = null;
         body.setVelocity(0, 0);
       }
+    } else if (mVec) {
+      const baseSp = this.speed * speedMul;
+      const curSp = this.slowT > 0 ? baseSp * 0.6 : baseSp;
+      let vx = mVec.x * curSp;
+      let vy = mVec.y * curSp;
+      const dg = this.scene?.dungeon;
+      // 沿牆角平滑側移防卡
+      if (dg) {
+        if ((body.blocked.left || body.blocked.right) && Math.abs(mVec.y) < 0.25) {
+          const lookX = this.fx + Math.sign(mVec.x) * 24;
+          const upFree = dg.walkableAt(lookX, this.fy - 22);
+          const downFree = dg.walkableAt(lookX, this.fy + 22);
+          if (upFree && !downFree) vy = -curSp * 0.55;
+          else if (downFree && !upFree) vy = curSp * 0.55;
+        } else if ((body.blocked.up || body.blocked.down) && Math.abs(mVec.x) < 0.25) {
+          const lookY = this.fy + Math.sign(mVec.y) * 24;
+          const leftFree = dg.walkableAt(this.fx - 22, lookY);
+          const rightFree = dg.walkableAt(this.fx + 22, lookY);
+          if (leftFree && !rightFree) vx = -curSp * 0.55;
+          else if (rightFree && !leftFree) vx = curSp * 0.55;
+        }
+      }
+      body.setVelocity(vx, vy);
+      if (Math.abs(mVec.x) > 0.12) this.facing = mVec.x > 0 ? 1 : -1;
+      this.stuckT = 0;
     } else if (this.path.length) {
       const p = this.path[0];
       const dx = p.x - this.fx, dy = p.y - this.fy;
       const d = Math.hypot(dx, dy);
       const baseSp = this.speed * speedMul;
       const curSp = this.slowT > 0 ? baseSp * 0.6 : baseSp;
-      if (d < 6) {
+      if (d < 8) {
         this.path.shift();
         if (!this.path.length) body.setVelocity(0, 0);
       } else {
         const sp = Math.min(curSp, d / (dt / 1000) || curSp);
-        body.setVelocity((dx / d) * sp, (dy / d) * sp);
+        let vx = (dx / d) * sp;
+        let vy = (dy / d) * sp;
+        // A* 碰撞牆角滑動輔助
+        if ((body.blocked.left && vx < 0) || (body.blocked.right && vx > 0)) {
+          const tileCy = Math.floor(this.fy / 48) * 48 + 24;
+          const slideDir = Math.abs(dy) >= 6 ? Math.sign(dy) : (Math.sign(tileCy - this.fy) || 1);
+          vy = slideDir * sp * 0.92;
+        } else if ((body.blocked.up && vy < 0) || (body.blocked.down && vy > 0)) {
+          const tileCx = Math.floor(this.fx / 48) * 48 + 24;
+          const slideDir = Math.abs(dx) >= 6 ? Math.sign(dx) : (Math.sign(tileCx - this.fx) || 1);
+          vx = slideDir * sp * 0.92;
+        }
+        body.setVelocity(vx, vy);
+        this.lastMoveAngle = Math.atan2(dy, dx);
         if (Math.abs(dx) > 3) this.facing = dx > 0 ? 1 : -1;
       }
-      // 卡住偵測
+      // 卡住偵測與嚴格尋路自救
       const moved = Math.hypot(this.fx - this.lastPos.x, this.fy - this.lastPos.y);
-      if (moved < 0.4) { this.stuckT += dt; if (this.stuckT > 350) this.stop(); }
-      else this.stuckT = 0;
+      if (moved < 0.5) {
+        this.stuckT += dt;
+        if (this.stuckT > 220 && !this.repathedOnStuck && this.path.length) {
+          this.repathedOnStuck = true;
+          const dest = this.path[this.path.length - 1];
+          if (this.onStuck) this.onStuck(dest);
+        } else if (this.stuckT > 520) {
+          this.stop();
+        }
+      } else {
+        this.stuckT = 0;
+        this.repathedOnStuck = false;
+      }
     } else {
       body.setVelocity(0, 0);
     }

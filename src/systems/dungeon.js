@@ -216,13 +216,13 @@ export function generateVillage() {
     darkAlpha: 0.38,
   };
   d.landmarks = {
-    spawn: { x: 18, y: 16 },
-    campfire: { x: 18, y: 12 },
-    fountain: { x: 18, y: 8 },
-    smith: { x: 9, y: 9 },
-    forge: { x: 8, y: 6 },
-    anvil: { x: 11, y: 9 },
-    portal: { x: 26, y: 8 },
+    spawn: { x: 18, y: 17 },
+    campfire: { x: 18, y: 14 },
+    fountain: { x: 18, y: 10 },
+    smith: { x: 10, y: 12 },
+    forge: { x: 9, y: 8 },
+    anvil: { x: 12, y: 12 },
+    portal: { x: 24, y: 14 },
     dummy: { x: 10, y: 17 },
   };
   // 全村預設探索完成
@@ -239,6 +239,27 @@ export class Dungeon {
     this.W = W; this.H = H; this.grid = grid; this.rooms = rooms;
     this.explored = new Uint8Array(W * H);
     this.tiles = this.buildTiles();
+    this.bounds = this.computeBounds();
+  }
+  computeBounds() {
+    let minTx = this.W, minTy = this.H, maxTx = -1, maxTy = -1;
+    for (let y = 0; y < this.H; y++) {
+      for (let x = 0; x < this.W; x++) {
+        if (this.tiles[y][x] !== 0) {
+          if (x < minTx) minTx = x;
+          if (y < minTy) minTy = y;
+          if (x > maxTx) maxTx = x;
+          if (y > maxTy) maxTy = y;
+        }
+      }
+    }
+    if (maxTx < minTx) return { minX: 0, minY: 0, maxX: this.W * TILE, maxY: this.H * TILE };
+    return {
+      minX: minTx * TILE,
+      minY: minTy * TILE,
+      maxX: (maxTx + 1) * TILE,
+      maxY: (maxTy + 1) * TILE,
+    };
   }
   isFloor(tx, ty) {
     return tx >= 0 && ty >= 0 && tx < this.W && ty < this.H && this.grid[ty * this.W + tx] === 1;

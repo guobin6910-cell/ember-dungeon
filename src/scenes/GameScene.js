@@ -10,10 +10,12 @@ import {
   state, resetState, getStats, getEffectiveSkillLevel, addXp, INV_SIZE,
 } from '../state.js';
 import { FONT, QUALITY_COLORS, QUALITY_HEX } from '../ui.js';
-import { generateItem, generateSkillBook, itemDisplayName } from '../systems/items.js';
+import { generateItem, generateSetItem, generateSkillBook, itemDisplayName } from '../systems/items.js';
+import { getBossSetId } from '../systems/sets.js';
 import { getSkillData, SKILL_LIST } from '../systems/skills.js';
 import { RUNE_DEFS, rollRandomRune, runeDisplayName } from '../systems/runes.js';
 import { saveGame, loadGame, clearSave } from '../systems/save.js';
+import { getDifficulty } from '../systems/difficulty.js';
 
 const VW = 1280, VH = 720;
 const rand = Phaser.Math.Between;
@@ -25,12 +27,15 @@ export default class GameScene extends Phaser.Scene {
     this.mode = data.mode || 'village';
     this.floor = data.floor || 1;
     this.keepState = !!data.keepState;
+    this.initDifficulty = data.difficulty || null;
   }
 
   create() {
-    if (!this.keepState) resetState();
+    if (!this.keepState) resetState(this.initDifficulty);
     state.mode = this.mode;
     state.floor = this.mode === 'village' ? 0 : this.floor;
+    this._smartAim = false;
+    this.movePointerId = null;
 
     this.input.mouse.disableContextMenu();
     this.cameras.main.fadeIn(400);
@@ -58,7 +63,10 @@ export default class GameScene extends Phaser.Scene {
     this.shrines = [];
     this.propTarget = null;
     this.interactTarget = null;
+    this.lootTarget = null;
     this.attackTarget = null;
+    this.tutMarkers = [];
+    this.targetRing = this.add.circle(0, 0, 22, 0xffe060, 0.12).setStrokeStyle(2, 0xffe060, 0.85).setDepth(3).setVisible(false);
     this.holdMove = false;
     this.holdT = 0;
     this.chaseT = 0;
@@ -104,6 +112,7 @@ export default class GameScene extends Phaser.Scene {
       sy = start.cy * TILE + TILE / 2;
     }
     this.player = new Player(this, sx, sy);
+    this.player.onStuck = (dest) => this.repathStrict(dest);
     this.physics.add.collider(this.player.sprite, this.layer);
 
     // ---- 敵人與場景佈置
@@ -254,6 +263,22 @@ export default class GameScene extends Phaser.Scene {
       this.game.events.emit('inventoryChanged');
       return item;
     };
+    window.__ember.giveSetItem = (setId = 'bone_warlord', slot = null) => {
+      if (state.inventory.length >= INV_SIZE) return null;
+      const item = generateSetItem(setId, Math.max(2, this.floor * 2 + 1), slot);
+      state.inventory.push(item);
+      this.game.events.emit('inventoryChanged');
+      return item;
+    };
+    window.__ember.spawnTestSet = (setId = 'bone_warlord', slot = null) => {
+      const item = generateSetItem(setId, Math.max(2, this.floor * 2 + 1), slot);
+      this.spawnItem(this.player.fx + 96, this.player.fy, item);
+      return item;
+    };
+    window.__ember.giveEssence = (n = 5) => {
+      state.setEssence = (state.setEssence || 0) + n;
+      return state.setEssence;
+    };
 
     if (this.keepState) saveGame();
 
@@ -313,13 +338,14 @@ export default class GameScene extends Phaser.Scene {
     this.add.image(sm.x, sm.y + 10, 'shadowtex').setScale(0.75, 0.32).setDepth(2);
     this.add.image(sm.x, sm.y - 6, 'npc_smith').setDepth(sm.y);
     this.addInteractable(sm.x, sm.y, 52, '鐵匠 布朗（點擊鍛造裝備）', '#ffd070', () => {
+      if (state.tutorial) state.tutorial.smithDone = true;
       this.sfx('forge');
       this.game.events.emit('openForge');
     });
 
     // 深淵傳送門
     const pt = wc(lm.portal);
-    this.createPortalProp(pt.x, pt.y, 0xb040ff, '深淵傳送門（進入無盡地城 [G]）', () => {
+    this.createPortalProp(pt.x, pt.y, 0xb040ff, '深淵傳送門 [G]', () => {
       this.sfx('portal');
       this.game.events.emit('openPortal');
     });
@@ -327,6 +353,20 @@ export default class GameScene extends Phaser.Scene {
     // 訓練木樁
     const dm = wc(lm.dummy);
     this.spawnEnemy('dummy', dm.x, dm.y, 1);
+
+    // 輕量新手引導箭頭（木樁 / 鐵匠 / 傳送門）
+    const addTut = (key, gx, gy, col) => {
+      const arrow = this.add.text(gx, gy - 64, '▼', {
+        fontFamily: FONT, fontSize: '20px', color: col, stroke: '#000', strokeThickness: 4, fontStyle: 'bold',
+      }).setOrigin(0.5).setDepth(9470);
+      const ring = this.add.circle(gx, gy, 34, 0xffe060, 0).setStrokeStyle(2, 0xffe060, 0.75).setDepth(3);
+      this.tweens.add({ targets: arrow, y: gy - 54, duration: 550, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+      this.tutMarkers.push({ key, arrow, ring });
+    };
+    addTut('dummy', dm.x, dm.y, '#ffe060');
+    addTut('smith', sm.x, sm.y, '#ffd070');
+    addTut('portal', pt.x, pt.y, '#d890ff');
+    this.updateTutorialVisuals();
 
     // 村莊豐富擺飾（武器架、火盆、戰旗、枯木、木桶）
     this.add.image((lm.smith.x + 2) * TILE + TILE / 2, (lm.smith.y - 2) * TILE + TILE / 2, 'prop_rack')
@@ -373,6 +413,8 @@ export default class GameScene extends Phaser.Scene {
   enterVillage() {
     if (this.transitioning || this.player.dead) return;
     this.transitioning = true;
+    this.player.clearMoveInputs();
+    this.scene.get('UI')?.resetTouchInputs?.();
     this.sfx('portal');
     this.cameras.main.fadeOut(280, 0, 0, 0);
     this.cameras.main.once('camerafadeoutcomplete', () => {
@@ -383,12 +425,34 @@ export default class GameScene extends Phaser.Scene {
   enterFloor(floor) {
     if (this.transitioning || this.player.dead) return;
     const f = Math.max(1, Math.min(state.maxFloor, floor));
+    if (state.tutorial) {
+      state.tutorial.enteredDungeon = true;
+      saveGame();
+    }
     this.transitioning = true;
+    this.player.clearMoveInputs();
+    this.scene.get('UI')?.resetTouchInputs?.();
     this.sfx('portal');
     this.cameras.main.fadeOut(280, 0, 0, 0);
     this.cameras.main.once('camerafadeoutcomplete', () => {
       this.scene.restart({ mode: 'dungeon', floor: f, keepState: true });
     });
+  }
+
+  updateTutorialVisuals() {
+    if (!this.tutMarkers || !this.tutMarkers.length) return;
+    const tut = state.tutorial || {};
+    const hideAll = !!tut.enteredDungeon || !!tut.dismissed;
+    for (const m of this.tutMarkers) {
+      let show = false;
+      if (!hideAll) {
+        if (m.key === 'dummy') show = !tut.dummyDone;
+        else if (m.key === 'smith') show = !tut.smithDone;
+        else if (m.key === 'portal') show = true;
+      }
+      m.arrow.setVisible(show);
+      m.ring.setVisible(show);
+    }
   }
 
   // =========================================================== 地城裝飾與怪物
@@ -608,7 +672,8 @@ export default class GameScene extends Phaser.Scene {
       this.sfx('chest');
       this.burst(x, y - 8, 22, [0xffd040, 0xfff8b0], 150, 450);
 
-      const goldAmt = rand(25 + this.floor * 15, 50 + this.floor * 25);
+      const diff = getDifficulty(state.difficulty);
+      const goldAmt = Math.max(1, Math.round(rand(25 + this.floor * 15, 50 + this.floor * 25) * diff.goldMul));
       this.spawnGold(x + rand(-18, 18), y + rand(10, 24), goldAmt);
       const ilvl = Math.max(1, this.floor * 2);
       const mf = getStats().magicFind;
@@ -626,11 +691,14 @@ export default class GameScene extends Phaser.Scene {
       if (Math.random() < Math.min(0.65, 0.35 * (1 + mf * 0.3))) {
         this.spawnItem(x + rand(-20, 20), y + rand(12, 26), generateSkillBook());
       }
-      if (Math.random() < Math.min(0.75, (rich ? 0.45 : 0.22) * (1 + mf * 0.6))) {
+      if (rich && Math.random() < 0.12) {
+        this.spawnItem(x + rand(-24, 24), y + rand(14, 28), generateSetItem(null, ilvl));
+      }
+      if (Math.random() < Math.min(0.85, (rich ? 0.45 : 0.22) * (1 + mf * 0.6) * diff.runeMul)) {
         this.spawnRune(x + rand(-24, 24), y + rand(12, 26), rollRandomRune(this.floor));
       }
       if (Math.random() < 0.55) {
-        const sh = rand(1, 2);
+        const sh = rand(1, 2) + (diff.shardBonus > 0 ? 1 : 0);
         state.shards += sh;
         this.floatText(x, y - 34, `+${sh} 餘燼石`, '#ff88ff', 15);
       }
@@ -694,10 +762,11 @@ export default class GameScene extends Phaser.Scene {
     this.add.image(pr.x, pr.y, 'prop_debris').setDepth(1).setAlpha(0.85).setAngle(rand(0, 3) * 90);
     this.bloodBurst(pr.x, pr.y, 8, pr.kind === 'barrel' ? 0x8a5828 : 0x9a6448);
 
+    const diff = getDifficulty(state.difficulty);
     const mf = getStats().magicFind;
     const r = Math.random();
     if (r < 0.42) {
-      this.spawnGold(pr.x, pr.y, rand(4 + this.floor * 3, 14 + this.floor * 6));
+      this.spawnGold(pr.x, pr.y, Math.max(1, Math.round(rand(4 + this.floor * 3, 14 + this.floor * 6) * diff.goldMul)));
     } else if (r < 0.58) {
       this.spawnOrbLoot(pr.x, pr.y, Math.random() < 0.55 ? 'hp' : 'mp');
     } else if (r < 0.66) {
@@ -748,7 +817,7 @@ export default class GameScene extends Phaser.Scene {
 
   updateTraps(time, dt) {
     const p = this.player;
-    const dmg = Math.round(10 + this.floor * 4);
+    const dmg = Math.max(1, Math.round((10 + this.floor * 4) * getDifficulty(state.difficulty).trapMul));
     const hitTargets = (tx, ty, rad, tr) => {
       const now = time;
       if (!p.dead && Math.hypot(p.fx - tx, p.fy - ty) < rad + PLAYER_R) {
@@ -812,7 +881,14 @@ export default class GameScene extends Phaser.Scene {
     const l = {
       kind: 'orb', sprite: s, glow, x, y, t: 0,
       update: (d, dt, i) => {
-        if (d < 28 && l.t > 350 && !this.player.dead) {
+        if (d < 85 && l.t > 350 && !this.player.dead) {
+          const k = Math.min(1, (dt / 1000) * 8);
+          l.x += (this.player.fx - l.x) * k; l.y += (this.player.fy - l.y) * k;
+          s.setPosition(l.x, l.y);
+          glow.setPosition(l.x, l.y);
+        }
+        if (d < 40 && l.t > 350 && !this.player.dead) {
+          if (this.lootTarget === l) this.lootTarget = null;
           const st = getStats();
           if (isHp) {
             const val = Math.round(st.maxHp * 0.18);
@@ -840,18 +916,32 @@ export default class GameScene extends Phaser.Scene {
       if (i === 0) return;
       const lvl = (this.floor - 1) * 2 + 1 + Math.floor(i * 0.7);
       const list = [];
+      let roomAggroDist = null;
       if (room.boss) {
         this.bossRoom = room;
         list.push(pick(biome.pool), pick(biome.pool), pick(biome.pool), pick(biome.pool));
+      } else if (this.floor === 1 && i === 1) {
+        // 第 1 層入口首戰門檻緩衝：2~3 隻基礎怪、無遠程偷襲或精英
+        const starterPool = ['skeleton', 'skeleton', 'bat'];
+        const n = rand(2, 3);
+        for (let k = 0; k < n; k++) list.push(pick(starterPool));
+        roomAggroDist = 255;
+      } else if (this.floor === 1 && i === 2) {
+        const earlyPool = ['skeleton', 'archer', 'bat'];
+        for (let k = 0; k < 3; k++) list.push(pick(earlyPool));
       } else {
-        const n = rand(3, 5) + Math.floor(i / 4) + (room.branch ? 1 : 0);
+        const baseMin = this.floor === 1 && i === 3 ? 2 : 3;
+        const baseMax = this.floor === 1 && i === 3 ? 4 : 5;
+        const n = rand(baseMin, baseMax) + Math.floor(i / 4) + (room.branch ? 1 : 0);
         for (let k = 0; k < n; k++) list.push(pick(biome.pool));
-        if (room.branch || i >= 3) list.push(pick(biome.elites));
-        if (room.branch || i >= 6) list.push(pick(biome.elites));
+        const allowElite1 = room.branch ? (this.floor > 1 || (room.parent >= 2)) : i >= (this.floor === 1 ? 4 : 3);
+        if (allowElite1) list.push(pick(biome.elites));
+        if (!room.branch && this.floor > 1 && i >= 6) list.push(pick(biome.elites));
       }
       for (const type of list) {
         const p = d.randomFloorInRoom(room, room.boss ? 2 : 1);
-        this.spawnEnemy(type, p.x, p.y, lvl);
+        const en = this.spawnEnemy(type, p.x, p.y, this.floor === 1 && i === 1 ? 1 : lvl);
+        if (roomAggroDist) en.aggroDist = roomAggroDist;
       }
     });
     const br = this.bossRoom;
@@ -955,16 +1045,37 @@ export default class GameScene extends Phaser.Scene {
   // =========================================================== 輸入
   setupInput() {
     const kb = this.input.keyboard;
+    kb.addCapture(['SPACE', 'UP', 'DOWN', 'LEFT', 'RIGHT']);
+    this.moveKeys = kb.addKeys({
+      w: 'W', a: 'A', s: 'S', d: 'D',
+      up: 'UP', down: 'DOWN', left: 'LEFT', right: 'RIGHT',
+    });
     this.input.on('pointerdown', (p) => {
+      if (typeof document !== 'undefined' && document.activeElement?.blur) document.activeElement.blur();
       Sfx.init();
       Sfx.startAmbient();
       if (this.player.dead || this.victoryPending || this.transitioning) return;
       if (p.y >= VH - 92) return;
+      const ui = this.scene.get('UI');
+      if (ui && (ui.activeModal || ui.isPointerOverHud(p))) return;
       if (p.rightButtonDown()) { this.tryDodge(); return; }
-      if (p.leftButtonDown()) this.onLeftClick(p);
+      if (p.leftButtonDown() || p.wasTouch) {
+        this.movePointerId = p.id;
+        this.onLeftClick(p);
+      }
     });
-    this.input.on('pointerup', () => { this.holdMove = false; });
-    kb.on('keydown-SPACE', () => this.tryDodge());
+    this.input.on('pointerup', (p) => {
+      if (this.movePointerId === null || p.id === this.movePointerId) {
+        this.holdMove = false;
+        this.movePointerId = null;
+      }
+    });
+    kb.on('keydown-SPACE', (ev) => {
+      ev?.preventDefault?.();
+      const ui = this.scene.get('UI');
+      if (ui && ui.activeModal) return;
+      this.tryDodge();
+    });
     kb.on('keydown-ONE', () => this.castSlot(0));
     kb.on('keydown-TWO', () => this.castSlot(1));
     kb.on('keydown-THREE', () => this.castSlot(2));
@@ -984,19 +1095,59 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
-  interactNearest() {
-    if (this.player.dead) return;
-    let best = null, bd = 120;
+  getNearestInteractable(maxDist = 145) {
+    if (!this.player || this.player.dead) return null;
+    let best = null, bd = maxDist;
     for (const it of this.interactables) {
       const d = Math.hypot(it.x - this.player.fx, it.y - this.player.fy);
       if (d < bd) { bd = d; best = it; }
     }
+    return best;
+  }
+
+  interactNearest() {
+    const best = this.getNearestInteractable(145);
     if (best) best.onUse();
   }
 
-  pointerWorld() {
-    const p = this.input.activePointer;
+  pointerWorld(p = this.input.activePointer) {
     return { x: p.x + this.cameras.main.scrollX, y: p.y + this.cameras.main.scrollY };
+  }
+
+  getAimWorld(maxRange = 420, preferMoveDir = false) {
+    if (!this._smartAim) return this.pointerWorld();
+    const p = this.player;
+    const joyMag = Math.hypot(p.joyVec.x, p.joyVec.y);
+    if (preferMoveDir && joyMag > 0.15) {
+      const ang = Math.atan2(p.joyVec.y, p.joyVec.x);
+      const dist = Math.min(maxRange, 220);
+      return { x: p.fx + Math.cos(ang) * dist, y: p.fy + Math.sin(ang) * dist };
+    }
+    if (!preferMoveDir) {
+      if (this.attackTarget && !this.attackTarget.dead && Math.hypot(this.attackTarget.fx - p.fx, this.attackTarget.fy - p.fy) <= maxRange + 80) {
+        return { x: this.attackTarget.fx, y: this.attackTarget.fy };
+      }
+      let best = null, bd = maxRange;
+      for (const e of this.enemies) {
+        if (e.dead || e.isDummy) continue;
+        const d = Math.hypot(e.fx - p.fx, e.fy - p.fy);
+        if (d < bd) { bd = d; best = e; }
+      }
+      if (!best) {
+        for (const e of this.enemies) {
+          if (e.dead || !e.isDummy) continue;
+          const d = Math.hypot(e.fx - p.fx, e.fy - p.fy);
+          if (d < Math.min(maxRange, 320)) { bd = d; best = e; }
+        }
+      }
+      if (best) return { x: best.fx, y: best.fy };
+    }
+    if (joyMag > 0.15) {
+      const ang = Math.atan2(p.joyVec.y, p.joyVec.x);
+      return { x: p.fx + Math.cos(ang) * 200, y: p.fy + Math.sin(ang) * 200 };
+    }
+    const ang = Number.isFinite(p.lastMoveAngle) ? p.lastMoveAngle : (p.facing >= 0 ? 0 : Math.PI);
+    return { x: p.fx + Math.cos(ang) * 200, y: p.fy + Math.sin(ang) * 200 };
   }
 
   enemyAt(wx, wy) {
@@ -1010,14 +1161,23 @@ export default class GameScene extends Phaser.Scene {
     return best;
   }
 
-  onLeftClick() {
-    const w = this.pointerWorld();
-    // 優先檢查可互動物件
-    const inter = this.interactables.find((it) => Math.hypot(it.x - w.x, it.y - w.y) <= it.r + 14);
+  hitLabel(obj, wx, wy, pad = 6) {
+    if (!obj || !obj.active || !obj.visible || !obj.getBounds) return false;
+    const b = obj.getBounds();
+    return wx >= b.left - pad && wx <= b.right + pad && wy >= b.top - pad && wy <= b.bottom + pad;
+  }
+
+  onLeftClick(p = this.input.activePointer) {
+    const w = this.pointerWorld(p);
+    // 優先檢查可互動物件（含其浮動文字標籤）
+    const inter = this.interactables.find((it) => Math.hypot(it.x - w.x, it.y - w.y) <= it.r + 24 || this.hitLabel(it.label, w.x, w.y, 6));
     if (inter) {
       this.attackTarget = null;
+      this.lootTarget = null;
+      this.propTarget = null;
       this.holdMove = false;
-      if (Math.hypot(inter.x - this.player.fx, inter.y - this.player.fy) <= 105) {
+      const useDist = Math.max(115, inter.r + 68);
+      if (Math.hypot(inter.x - this.player.fx, inter.y - this.player.fy) <= useDist) {
         inter.onUse();
       } else {
         this.interactTarget = inter;
@@ -1030,18 +1190,20 @@ export default class GameScene extends Phaser.Scene {
     if (e) {
       this.propTarget = null;
       this.interactTarget = null;
+      this.lootTarget = null;
       this.attackTarget = e;
       this.chaseT = 0;
       this.holdMove = false;
       return;
     }
 
-    const pr = this.props.find((o) => !o.dead && Math.hypot(o.x - w.x, o.y - w.y) < 26);
+    const pr = this.props.find((o) => !o.dead && Math.hypot(o.x - w.x, o.y - w.y) < 28);
     if (pr) {
       this.interactTarget = null;
       this.attackTarget = null;
+      this.lootTarget = null;
       this.holdMove = false;
-      if (Math.hypot(pr.x - this.player.fx, pr.y - this.player.fy) <= 58) {
+      if (Math.hypot(pr.x - this.player.fx, pr.y - this.player.fy) <= 62) {
         this.player.startSwing(Math.atan2(pr.y - this.player.fy, pr.x - this.player.fx));
         this.smashProp(pr);
       } else {
@@ -1054,12 +1216,14 @@ export default class GameScene extends Phaser.Scene {
     this.propTarget = null;
     this.interactTarget = null;
     this.attackTarget = null;
-    const it = this.loot.find((l) => l.kind === 'item' && Math.hypot(l.x - w.x, l.y - 14 - w.y) < 32);
-    if (it) {
+    const lootHit = this.loot.find((l) => l.kind !== 'gold' && (Math.hypot(l.x - w.x, l.y - 10 - w.y) < 38 || this.hitLabel(l.label, w.x, w.y, 6)));
+    if (lootHit) {
       this.holdMove = false;
-      this.moveTo(it.x, it.y, true);
+      this.lootTarget = lootHit;
+      this.moveTo(lootHit.x, lootHit.y, true);
       return;
     }
+    this.lootTarget = null;
     this.holdMove = true;
     this.holdT = 0;
     this.moveTo(w.x, w.y, true);
@@ -1068,10 +1232,20 @@ export default class GameScene extends Phaser.Scene {
   moveTo(wx, wy, marker = false) {
     const p = this.player;
     if (p.dodge || p.dash || this.whirl) return;
-    const path = this.pf.worldPath(p.fx, p.fy, wx, wy, PLAYER_R + 2, 8000);
+    const path = this.pf.worldPath(p.fx, p.fy, wx, wy, PLAYER_R + 2, 8000, true);
     if (path && path.length) {
       p.setPath(path);
       if (marker) this.clickMarker(path[path.length - 1].x, path[path.length - 1].y);
+    }
+  }
+
+  repathStrict(dest) {
+    const p = this.player;
+    if (!dest || p.dead || p.dodge || p.dash || this.whirl) return;
+    const strict = this.pf.worldPath(p.fx, p.fy, dest.x, dest.y, PLAYER_R + 2, 8000, false);
+    if (strict && strict.length) {
+      p.path = strict;
+      p.stuckT = 0;
     }
   }
 
@@ -1080,12 +1254,33 @@ export default class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: c, scale: 0.2, alpha: 0, duration: 400, onComplete: () => c.destroy() });
   }
 
-  tryDodge() {
+  grantShadowCrit(s = getStats()) {
+    if (!s.setEffects?.dodgeCrit || !state.buffs) return;
+    state.buffs.shadowCrit = 4000;
+    this.floatText(this.player.fx, this.player.sprite.y - 42, '影殺必爆！', '#ff7090', 16);
+  }
+
+  consumeShadowCrit(s = getStats()) {
+    if (!s.setEffects?.dodgeCrit || !state.buffs || state.buffs.shadowCrit <= 0) return false;
+    state.buffs.shadowCrit = 0;
+    return true;
+  }
+
+  tryDodge(opt = {}) {
     const p = this.player;
-    if (p.dead || p.dodge || p.dash) return;
+    if (p.dead || p.dodge || p.dash || this.transitioning) return;
     if (p.dodgeCd > 0) { this.sfx('denied'); return; }
-    const w = this.pointerWorld();
-    const ang = Math.atan2(w.y - p.fy, w.x - p.fx);
+    let ang;
+    const keyMag = Math.hypot(p.keyVec.x, p.keyVec.y);
+    if (!opt.smartAim && keyMag > 0.1) {
+      ang = Math.atan2(p.keyVec.y, p.keyVec.x);
+    } else {
+      const prev = this._smartAim;
+      this._smartAim = !!opt.smartAim;
+      const w = this.getAimWorld(200, true);
+      this._smartAim = prev;
+      ang = Math.atan2(w.y - p.fy, w.x - p.fx);
+    }
     const s = getStats();
     const dcd = Math.round(1200 * (1 - s.dodgeCdr));
     p.startDodge(ang);
@@ -1094,8 +1289,10 @@ export default class GameScene extends Phaser.Scene {
     p.invuln = 300;
     this.attackTarget = null;
     this.interactTarget = null;
+    this.lootTarget = null;
     this.holdMove = false;
     this.sfx('dodge');
+    this.grantShadowCrit(s);
     for (let i = 1; i <= 3; i++) {
       this.time.delayedCall(i * 60, () => {
         if (!p.sprite.active) return;
@@ -1106,6 +1303,73 @@ export default class GameScene extends Phaser.Scene {
   }
 
   // =========================================================== 戰鬥
+  attackNearest() {
+    const p = this.player;
+    if (p.dead || p.dodge || p.dash || this.whirl || this.transitioning) return;
+    const joyMoving = Math.hypot(p.joyVec.x, p.joyVec.y) > 0.08;
+
+    let target = this.attackTarget && !this.attackTarget.dead && Math.hypot(this.attackTarget.fx - p.fx, this.attackTarget.fy - p.fy) <= 420
+      ? this.attackTarget
+      : null;
+    if (!target) {
+      let bd = 360;
+      for (const e of this.enemies) {
+        if (e.dead || e.isDummy) continue;
+        const d = Math.hypot(e.fx - p.fx, e.fy - p.fy);
+        if (d < bd) { bd = d; target = e; }
+      }
+      if (!target) {
+        bd = 240;
+        for (const e of this.enemies) {
+          if (e.dead || !e.isDummy) continue;
+          const d = Math.hypot(e.fx - p.fx, e.fy - p.fy);
+          if (d < bd) { bd = d; target = e; }
+        }
+      }
+    }
+
+    if (target) {
+      const gap = Math.hypot(target.fx - p.fx, target.fy - p.fy) - target.T.r - PLAYER_R;
+      if (gap <= 44 || (joyMoving && gap <= 70)) {
+        p.facing = target.fx >= p.fx ? 1 : -1;
+        if (p.attackCd <= 0) this.playerAttack(target);
+        return;
+      }
+      if (!joyMoving) {
+        this.attackTarget = target;
+        this.interactTarget = null;
+        this.propTarget = null;
+        this.chaseT = 0;
+        return;
+      }
+    }
+
+    const nearProp = this.props.find((pr) => !pr.dead && Math.hypot(pr.x - p.fx, pr.y - p.fy) <= 85);
+    if (nearProp && p.attackCd <= 0) {
+      const ang = Math.atan2(nearProp.y - p.fy, nearProp.x - p.fx);
+      const s0 = getStats();
+      p.startSwing(ang);
+      p.attackCd = Math.max(200, Math.round(520 / (1 + s0.atkSpeed)));
+      this.sfx('swing');
+      this.smashProp(nearProp);
+      return;
+    }
+
+    if (p.attackCd <= 0) {
+      const s0 = getStats();
+      const ang = joyMoving
+        ? Math.atan2(p.joyVec.y, p.joyVec.x)
+        : (Number.isFinite(p.lastMoveAngle) ? p.lastMoveAngle : (p.facing >= 0 ? 0 : Math.PI));
+      p.startSwing(ang);
+      p.attackCd = Math.max(200, Math.round(520 / (1 + s0.atkSpeed)));
+      this.sfx('swing');
+      const sx = p.fx + Math.cos(ang) * 22, sy = p.sprite.y + Math.sin(ang) * 22;
+      const sl = this.add.image(sx, sy, 'slash').setRotation(ang).setScale(0.55).setTint(0xffe0b0)
+        .setBlendMode(Phaser.BlendModes.ADD).setDepth(p.fy + 2).setAlpha(0.9);
+      this.tweens.add({ targets: sl, alpha: 0, scale: 0.7, duration: 200, onComplete: () => sl.destroy() });
+      this.smashPropsInRadius(sx, p.fy + Math.sin(ang) * 20, 42);
+    }
+  }
   playerAttack(e) {
     const p = this.player;
     const s0 = getStats();
@@ -1124,15 +1388,22 @@ export default class GameScene extends Phaser.Scene {
       const gap = Math.hypot(e.fx - p.fx, e.fy - p.fy) - e.T.r - PLAYER_R;
       if (gap > 50) return;
       const s = getStats();
-      const crit = Math.random() < s.critChance;
+      const shadow = this.consumeShadowCrit(s);
+      const crit = shadow || Math.random() < s.critChance;
       let dmg = s.attack * (0.85 + Math.random() * 0.3);
-      if (crit) dmg *= s.critDmg;
+      if (crit) dmg *= s.critDmg * (shadow ? 1.5 : 1);
+      if (shadow) this.floatText(e.fx, e.sprite.y - e.T.h / 2 - 22, '影殺爆擊！', '#ff7090', 16);
       this.damageEnemy(e, Math.max(1, Math.round(dmg)), { crit, kx: e.fx - p.fx, ky: e.fy - p.fy });
     });
   }
 
   damageEnemy(e, amount, opt = {}) {
     if (e.dead) return;
+    if (e.isDummy && state.tutorial && !state.tutorial.dummyDone) {
+      state.tutorial.dummyDone = true;
+      this.updateTutorialVisuals();
+      saveGame();
+    }
     if (!e.isDummy) e.hp -= amount;
     e.aggro = true;
     if (e.isBoss && !this.bossActive) this.startBossFight();
@@ -1224,6 +1495,33 @@ export default class GameScene extends Phaser.Scene {
   onEnemyKilled(e) {
     if (e.isDummy) return;
     const s = getStats();
+
+    // 深淵疫主 4 件套效果：擊殺縮短所有技能冷卻 1 秒，受毒霧／靈魂收割影響敵人擴散新毒霧
+    if (s.setEffects?.plagueSpread) {
+      for (const k in this.skillCd) {
+        if (this.skillCd[k] > 0) this.skillCd[k] = Math.max(0, this.skillCd[k] - 1000);
+      }
+      if ((e.plagueUntil || 0) > this.time.now && this.groundEffects.length < 6) {
+        const pdmg = Math.max(6, Math.round((8 + s.int * 1.1 + state.level * 1.3) * s.spellPower));
+        const tx = e.fx, ty = e.fy, R = 105;
+        this.sfx('poison');
+        const boom = this.add.circle(tx, ty, 24, 0x70ff40, 0.32).setStrokeStyle(2.5, 0xa0ff70, 0.9).setDepth(3);
+        this.tweens.add({ targets: boom, scale: R / 24, alpha: 0, duration: 360, onComplete: () => boom.destroy() });
+        this.floatText(tx, ty - 28, '瘟疫擴散！', '#78ff70', 16);
+        for (const oe of this.enemies.slice()) {
+          if (oe.dead || oe.isDummy) continue;
+          if (Math.hypot(oe.fx - tx, oe.fy - ty) <= R + oe.T.r) {
+            oe.applySlow(1200);
+            oe.plagueUntil = this.time.now + 5500;
+            this.damageEnemy(oe, Math.round(pdmg * 1.5), { color: '#78ff70', isProc: true });
+          }
+        }
+        const cloud = this.add.circle(tx, ty, R, 0x50d028, 0.20).setStrokeStyle(2, 0x90ff50, 0.65).setDepth(3);
+        const inner = this.add.image(tx, ty, 'glow').setTint(0x60e830).setBlendMode(Phaser.BlendModes.ADD).setScale(1.6).setAlpha(0.40).setDepth(3);
+        this.groundEffects.push({ x: tx, y: ty, r: R, t: 0, tickT: 500, dur: 3500, dmg: pdmg, visuals: [cloud, inner] });
+      }
+    }
+
     const ups = addXp(e.xp);
     this.floatText(e.fx, e.sprite.y - 40, `+${e.xp} 經驗`, '#b080ff', 14);
     if (ups) this.onLevelUp();
@@ -1238,16 +1536,23 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
+    const diff = getDifficulty(state.difficulty);
+
     if (Math.random() < 0.78 || e.T.elite) {
-      const g = Math.round(rand(e.T.gold[0], e.T.gold[1]) * (1 + e.lvl * 0.25) * (1 + s.goldFind));
+      const g = Math.max(1, Math.round(rand(e.T.gold[0], e.T.gold[1]) * (1 + e.lvl * 0.25) * (1 + s.goldFind) * diff.goldMul));
       this.spawnGold(e.fx + rand(-12, 12), e.fy + rand(-8, 8), g);
     }
 
-    // 餘燼石掉落
+    // 餘燼石與套裝精華掉落
     if (e.isBoss || e.T.elite) {
-      const shards = e.isBoss ? 3 + Math.floor(this.floor / 2) : rand(1, 2);
+      const bonus = e.isBoss ? diff.shardBonus : (diff.shardBonus > 0 && Math.random() < 0.5 ? 1 : 0);
+      const shards = (e.isBoss ? 3 + Math.floor(this.floor / 2) : rand(1, 2)) + bonus;
       state.shards += shards;
       this.floatText(e.fx, e.sprite.y - 60, `+${shards} 餘燼石`, '#ff88ff', 15);
+      if (e.isBoss) {
+        state.setEssence = (state.setEssence || 0) + 1;
+        this.floatText(e.fx, e.sprite.y - 82, '+1 套裝精華', '#38f288', 15);
+      }
     }
 
     const mf = s.magicFind || 0;
@@ -1265,16 +1570,35 @@ export default class GameScene extends Phaser.Scene {
       this.spawnItem(e.fx + rand(-30, 30), e.fy + rand(-20, 20), item);
     }
 
+    // 頭目定向套裝掉落 & 精英稀有套裝掉落
+    if (e.isBoss) {
+      const bossSetChance = Math.min(0.92, 0.65 + mf * 0.15);
+      if (Math.random() < bossSetChance) {
+        const setId = getBossSetId(e.bossType);
+        const owned = new Set();
+        for (const slot of Object.keys(state.equipment)) {
+          if (state.equipment[slot]?.setId === setId) owned.add(slot);
+        }
+        for (const it of state.inventory) {
+          if (it?.setId === setId) owned.add(it.slot);
+        }
+        const setItem = generateSetItem(setId, ilvl + 2, null, owned);
+        this.spawnItem(e.fx + rand(-28, 28), e.fy + rand(8, 28), setItem);
+      }
+    } else if (e.T.elite && Math.random() < Math.min(0.22, 0.10 * (1 + mf * 0.4))) {
+      this.spawnItem(e.fx + rand(-24, 24), e.fy + rand(-12, 20), generateSetItem(null, ilvl));
+    }
+
     // 技能書掉落
     const bookChance = e.isBoss ? 1 : Math.min(0.45, ((e.T.bookDrop || 0.03) + this.floor * 0.005) * (1 + mf * 0.45));
     if (Math.random() < bookChance) {
       this.spawnItem(e.fx + rand(-26, 26), e.fy + rand(-18, 18), generateSkillBook());
     }
 
-    // 符文掉落（調低機率並受掉寶率加成）
+    // 符文掉落（調低機率並受掉寶率與難度加成）
     const runeCount = e.isBoss
-      ? 1 + (Math.random() < Math.min(0.75, 0.15 + mf * 0.4) ? 1 : 0)
-      : Math.random() < (e.T.elite ? Math.min(0.45, 0.18 * (1 + mf * 0.65)) : Math.min(0.14, 0.035 * (1 + mf * 0.65)))
+      ? 1 + (Math.random() < Math.min(0.85, (0.15 + mf * 0.4) * diff.runeMul) ? 1 : 0)
+      : Math.random() < (e.T.elite ? Math.min(0.55, 0.18 * (1 + mf * 0.65) * diff.runeMul) : Math.min(0.18, 0.035 * (1 + mf * 0.65) * diff.runeMul))
         ? 1
         : 0;
     for (let k = 0; k < runeCount; k++) {
@@ -1282,8 +1606,8 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // =========================================================== 7 大技能
-  castSlot(slotIdx) {
+  // =========================================================== 17 大技能
+  castSlot(slotIdx, opt = {}) {
     const p = this.player;
     if (p.dead || p.dodge || p.dash || this.whirl || this.transitioning) return;
     const skillId = state.skillBar[slotIdx];
@@ -1316,12 +1640,18 @@ export default class GameScene extends Phaser.Scene {
       blade_storm: () => this.castBladeStorm(s, sk),
       soul_nova: () => this.castSoulNova(s, sk),
     };
-    if (map[skillId]) map[skillId]();
+    const prev = this._smartAim;
+    this._smartAim = !!opt.smartAim;
+    try {
+      if (map[skillId]) map[skillId]();
+    } finally {
+      this._smartAim = prev;
+    }
   }
 
   castFireball(s, sk) {
     const p = this.player;
-    const w = this.pointerWorld();
+    const w = this.getAimWorld(480, false);
     const sx = p.fx, sy = p.sprite.y;
     const ang = Math.atan2(w.y - sy, w.x - sx);
     p.startSwing(ang, 200);
@@ -1339,17 +1669,41 @@ export default class GameScene extends Phaser.Scene {
         trail.stopFollow();
         trail.stop();
         this.time.delayedCall(400, () => { if (trail.active) trail.destroy(); });
-        this.explosion(pr.x, pr.y, 80, dmg);
+        this.explosion(pr.x, pr.y, 80, dmg, 'explode', { allowSplit: true, baseAng: ang });
       },
     });
   }
 
-  calcCrit(s, raw) {
-    const crit = Math.random() < s.critChance;
-    return { crit, dmg: Math.max(1, Math.round(raw * (crit ? s.critDmg : 1))) };
+  calcCrit(s, raw, allowShadow = true) {
+    const shadow = allowShadow && this.consumeShadowCrit(s);
+    const crit = shadow || Math.random() < s.critChance;
+    const mult = crit ? s.critDmg * (shadow ? 1.5 : 1) : 1;
+    return { crit, shadow, dmg: Math.max(1, Math.round(raw * mult)) };
   }
 
-  explosion(x, y, r, dmg, sfxName = 'explode') {
+  spawnSplitFireballs(cx, cy, baseAng, splitDmg) {
+    const targets = this.enemies
+      .filter((e) => !e.dead && !e.isDummy && Math.hypot(e.fx - cx, e.fy - cy) <= 320)
+      .sort((a, b) => Math.hypot(a.fx - cx, a.fy - cy) - Math.hypot(b.fx - cx, b.fy - cy))
+      .slice(0, 3);
+    const offsets = [-0.55, 0, 0.55];
+    for (let i = 0; i < 3; i++) {
+      const ang = targets[i]
+        ? Math.atan2(targets[i].fy - cy, targets[i].fx - cx)
+        : (baseAng + offsets[i]);
+      const sx = cx + Math.cos(ang) * 18;
+      const sy = cy + Math.sin(ang) * 18;
+      const spr = this.add.image(sx, sy, 'fireball').setScale(0.82).setBlendMode(Phaser.BlendModes.ADD);
+      this.projectiles.push({
+        sprite: spr, x: sx, y: sy, vx: Math.cos(ang) * 480, vy: Math.sin(ang) * 480,
+        friendly: true, life: 750, r: 7, light: 95,
+        onUpdate: (pr) => pr.sprite.setRotation(pr.sprite.rotation + 0.35),
+        onHit: (pr) => this.explosion(pr.x, pr.y, 55, splitDmg, 'explode', { allowSplit: false, noShadow: true }),
+      });
+    }
+  }
+
+  explosion(x, y, r, dmg, sfxName = 'explode', opt = {}) {
     this.sfx(sfxName);
     this.cameras.main.shake(r > 100 ? 280 : 100, r > 100 ? 0.009 : 0.003);
     const c = this.add.image(x, y, 'glow').setTint(0xff7020).setBlendMode(Phaser.BlendModes.ADD).setScale(0.3).setDepth(9200);
@@ -1365,9 +1719,12 @@ export default class GameScene extends Phaser.Scene {
       if (e.dead) continue;
       const d = Math.hypot(e.fx - x, e.fy - y);
       if (d < r + e.T.r) {
-        const hit = this.calcCrit(s, dmg * (0.9 + Math.random() * 0.2));
-        this.damageEnemy(e, hit.dmg, { crit: hit.crit, color: hit.crit ? '#ffd030' : '#ff9030', kx: e.fx - x, ky: e.fy - y, force: 200 });
+        const hit = this.calcCrit(s, dmg * (0.9 + Math.random() * 0.2), !opt.noShadow);
+        this.damageEnemy(e, hit.dmg, { crit: hit.crit, isProc: !!opt.noShadow, color: hit.crit ? '#ffd030' : '#ff9030', kx: e.fx - x, ky: e.fy - y, force: 200 });
       }
+    }
+    if (opt.allowSplit && s.setEffects?.fireSplit) {
+      this.spawnSplitFireballs(x, y, opt.baseAng || 0, Math.max(4, Math.round(dmg * 0.55)));
     }
   }
 
@@ -1409,6 +1766,23 @@ export default class GameScene extends Phaser.Scene {
     if (w.t >= w.dur) {
       w.fx.forEach((f) => f.destroy());
       this.whirl = null;
+      const s = getStats();
+      if (s.setEffects?.whirlQuake && !p.dead) {
+        const R = 155;
+        const qDmg = Math.round(s.attack * 2.2);
+        this.slamEffect(p.fx, p.fy, R);
+        const qRing = this.add.circle(p.fx, p.fy, 24, 0x38f288, 0.20).setStrokeStyle(4, 0xffd860, 0.92).setDepth(9200);
+        this.tweens.add({ targets: qRing, scale: R / 24, alpha: 0, duration: 380, ease: 'Cubic.Out', onComplete: () => qRing.destroy() });
+        this.floatText(p.fx, p.sprite.y - 42, '震地衝擊！', '#38f288', 20);
+        this.smashPropsInRadius(p.fx, p.fy, R);
+        for (const e of this.enemies.slice()) {
+          if (e.dead) continue;
+          if (Math.hypot(e.fx - p.fx, e.fy - p.fy) <= R + e.T.r) {
+            const hit = this.calcCrit(s, qDmg * (0.9 + Math.random() * 0.2), false);
+            this.damageEnemy(e, hit.dmg, { crit: hit.crit, color: '#58ff98', isProc: true, kx: e.fx - p.fx, ky: e.fy - p.fy, force: 280 });
+          }
+        }
+      }
     }
   }
 
@@ -1429,7 +1803,7 @@ export default class GameScene extends Phaser.Scene {
 
   castChain(s, sk) {
     const p = this.player;
-    const w = this.pointerWorld();
+    const w = this.getAimWorld(380, false);
     p.startSwing(Math.atan2(w.y - p.fy, w.x - p.fx), 180);
     this.sfx('lightning');
 
@@ -1499,8 +1873,10 @@ export default class GameScene extends Phaser.Scene {
     for (const e of this.enemies.slice()) {
       if (e.dead) continue;
       if (Math.hypot(e.fx - p.fx, e.fy - p.fy) <= R + e.T.r) {
+        const wasSlow = e.slowT > 0;
         e.applySlow(2800);
-        const fh = this.calcCrit(s, dmg * (0.9 + Math.random() * 0.2));
+        const chillMul = s.setEffects?.fireSplit && wasSlow ? 1.4 : 1;
+        const fh = this.calcCrit(s, dmg * chillMul * (0.9 + Math.random() * 0.2));
         this.damageEnemy(e, fh.dmg, { crit: fh.crit, color: fh.crit ? '#ffd030' : '#80e8ff', kx: e.fx - p.fx, ky: e.fy - p.fy, force: 130 });
       }
     }
@@ -1508,7 +1884,7 @@ export default class GameScene extends Phaser.Scene {
 
   castShadowDash(s, sk) {
     const p = this.player;
-    const w = this.pointerWorld();
+    const w = this.getAimWorld(280, true);
     const ang = Math.atan2(w.y - p.fy, w.x - p.fx);
     const dmg = Math.round((18 + s.attack * 1.35) * sk.powerMult);
     const hitSet = new Set();
@@ -1517,6 +1893,7 @@ export default class GameScene extends Phaser.Scene {
     this.holdMove = false;
     p.invuln = 280;
     this.sfx('dash');
+    this.grantShadowCrit(s);
 
     p.startDash(ang, 280, 200, () => {
       this.smashPropsInRadius(p.fx, p.fy, 36);
@@ -1541,7 +1918,7 @@ export default class GameScene extends Phaser.Scene {
 
   castMeteor(s, sk) {
     const p = this.player;
-    const w = this.pointerWorld();
+    const w = this.getAimWorld(420, false);
     const ang = Math.atan2(w.y - p.fy, w.x - p.fx);
     const d = Math.min(420, Math.hypot(w.x - p.fx, w.y - p.fy));
     const tx = p.fx + Math.cos(ang) * d, ty = p.fy + Math.sin(ang) * d;
@@ -1575,7 +1952,7 @@ export default class GameScene extends Phaser.Scene {
 
   castCleave(s, sk) {
     const p = this.player;
-    const w = this.pointerWorld();
+    const w = this.getAimWorld(180, false);
     const ang = Math.atan2(w.y - p.fy, w.x - p.fx);
     const R = 145;
     p.startSwing(ang, 240);
@@ -1604,7 +1981,7 @@ export default class GameScene extends Phaser.Scene {
 
   castIceLance(s, sk) {
     const p = this.player;
-    const w = this.pointerWorld();
+    const w = this.getAimWorld(520, false);
     const sx = p.fx, sy = p.sprite.y;
     const ang = Math.atan2(w.y - sy, w.x - sx);
     p.startSwing(ang, 180);
@@ -1623,8 +2000,10 @@ export default class GameScene extends Phaser.Scene {
       onPierce: (pr, e) => {
         if (hitSet.has(e)) return;
         hitSet.add(e);
+        const wasSlow = e.slowT > 0;
         e.applySlow(2200);
-        const hit = this.calcCrit(s, dmg * (0.9 + Math.random() * 0.2));
+        const chillMul = s.setEffects?.fireSplit && wasSlow ? 1.4 : 1;
+        const hit = this.calcCrit(s, dmg * chillMul * (0.9 + Math.random() * 0.2));
         this.damageEnemy(e, hit.dmg, { crit: hit.crit, color: hit.crit ? '#ffd030' : '#80e8ff', kx: pr.vx, ky: pr.vy, force: 90 });
         this.burst(e.fx, e.sprite.y, 8, [0x80e8ff, 0xffffff], 100, 260);
       },
@@ -1638,7 +2017,7 @@ export default class GameScene extends Phaser.Scene {
 
   castPoisonCloud(s, sk) {
     const p = this.player;
-    const w = this.pointerWorld();
+    const w = this.getAimWorld(380, false);
     const ang = Math.atan2(w.y - p.fy, w.x - p.fx);
     const d = Math.min(380, Math.hypot(w.x - p.fx, w.y - p.fy));
     const tx = p.fx + Math.cos(ang) * d, ty = p.fy + Math.sin(ang) * d;
@@ -1672,7 +2051,7 @@ export default class GameScene extends Phaser.Scene {
 
   castArcaneOrb(s, sk) {
     const p = this.player;
-    const w = this.pointerWorld();
+    const w = this.getAimWorld(440, false);
     const sx = p.fx, sy = p.sprite.y;
     const ang = Math.atan2(w.y - sy, w.x - sx);
     p.startSwing(ang, 200);
@@ -1721,7 +2100,7 @@ export default class GameScene extends Phaser.Scene {
 
   castBlink(s, sk) {
     const p = this.player;
-    const w = this.pointerWorld();
+    const w = this.getAimWorld(240, true);
     const ang = Math.atan2(w.y - p.fy, w.x - p.fx);
     const maxDist = Math.min(260, Math.max(80, Math.hypot(w.x - p.fx, w.y - p.fy)));
     const ox = p.fx, oy = p.fy;
@@ -1734,6 +2113,7 @@ export default class GameScene extends Phaser.Scene {
       if (canStand(tx, ty)) { bx = tx; by = ty; }
     }
     this.sfx('blink');
+    this.grantShadowCrit(s);
     this.burst(ox, oy - 8, 16, [0x9040ff, 0x301060], 130, 320);
     p.stop();
     p.sprite.setPosition(bx, by - 12);
@@ -1754,7 +2134,7 @@ export default class GameScene extends Phaser.Scene {
 
   castThunderStrike(s, sk) {
     const p = this.player;
-    const w = this.pointerWorld();
+    const w = this.getAimWorld(360, false);
     p.startSwing(Math.atan2(w.y - p.fy, w.x - p.fx), 200);
     const count = 3 + Math.floor(sk.level / 5);
     const dmg = Math.round((20 + s.int * 2.2 + state.level * 2.5) * s.spellPower * sk.powerMult);
@@ -1815,6 +2195,7 @@ export default class GameScene extends Phaser.Scene {
     for (const e of this.enemies.slice()) {
       if (e.dead) continue;
       if (Math.hypot(e.fx - p.fx, e.fy - p.fy) <= R + e.T.r) {
+        e.plagueUntil = this.time.now + 5500;
         const hit = this.calcCrit(s, dmg * (0.9 + Math.random() * 0.2));
         total += hit.dmg;
         this.damageEnemy(e, hit.dmg, { crit: hit.crit, color: hit.crit ? '#ffd030' : '#ff80c0', kx: e.fx - p.fx, ky: e.fy - p.fy, force: 140 });
@@ -1834,8 +2215,11 @@ export default class GameScene extends Phaser.Scene {
     const glow = this.add.image(x, y, 'glow').setTint(col).setBlendMode(Phaser.BlendModes.ADD).setScale(0.6, 0.3).setAlpha(0.8).setDepth(2);
     let beam = null;
     if (item.quality !== 'white') {
+      const isSet = item.quality === 'set';
       beam = this.add.image(x, y - 50, 'glow').setTint(col).setBlendMode(Phaser.BlendModes.ADD)
-        .setScale(0.18, 1.4).setAlpha(item.quality === 'gold' || item.quality === 'book' ? 0.72 : 0.42).setDepth(9100);
+        .setScale(isSet ? 0.22 : 0.18, isSet ? 1.65 : 1.4)
+        .setAlpha(isSet ? 0.85 : (item.quality === 'gold' || item.quality === 'book' || item.quality === 'special' ? 0.72 : 0.42))
+        .setDepth(9100);
       this.tweens.add({ targets: beam, alpha: beam.alpha * 0.5, duration: 800, yoyo: true, repeat: -1 });
     }
     const texKey = item.kind === 'book' ? 'icon_book' : 'icon_' + item.slot;
@@ -1845,18 +2229,35 @@ export default class GameScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '13px', color: QUALITY_COLORS[item.quality], stroke: '#000', strokeThickness: 3,
       backgroundColor: 'rgba(0,0,0,0.55)', padding: { x: 3, y: 1 },
     }).setOrigin(0.5).setDepth(9450);
-    if (item.quality === 'gold' || item.quality === 'book') this.sfx('rare');
+    if (item.quality === 'gold' || item.quality === 'book' || item.quality === 'special' || item.quality === 'set') this.sfx('rare');
     const l = {
       kind: 'item', item, sprite: s, glow, beam, label, x, y, t: 0,
       update: (d, dt, i) => {
-        if (d < 28 && l.t > 450 && !this.player.dead) {
-          if (state.inventory.length >= INV_SIZE) {
+        if (this.player.dead || l.t <= 360) return;
+        const canBag = state.inventory.length < INV_SIZE;
+        const pullR = this.lootTarget === l ? 110 : 78;
+        if (canBag && d < pullR && d > 12) {
+          const k = Math.min(1, (dt / 1000) * 9);
+          l.x += (this.player.fx - l.x) * k;
+          l.y += (this.player.fy - l.y) * k;
+          s.setPosition(l.x, l.y - 8);
+          glow.setPosition(l.x, l.y);
+          label.setPosition(l.x, l.y - 34);
+          if (beam) beam.setPosition(l.x, l.y - 50);
+        }
+        if (d < 44) {
+          if (!canBag) {
             if (this.time.now > this.fullMsgT) { this.fullMsgT = this.time.now + 2500; this.msg('背包已滿！（按 B 整理、右鍵賣出）', '#ff8080'); }
             return;
           }
+          if (this.lootTarget === l) this.lootTarget = null;
           state.inventory.push(item);
           this.sfx(item.quality === 'white' ? 'pickup' : 'rare');
           this.msg(`拾取：${itemDisplayName(item)}`, QUALITY_COLORS[item.quality]);
+          if (item.kind === 'equip' && state.tutorial && !state.tutorial.firstLootDone) {
+            state.tutorial.firstLootDone = true;
+            this.game.events.emit('firstLoot');
+          }
           s.destroy(); glow.destroy(); label.destroy(); if (beam) beam.destroy();
           this.loot.splice(i, 1);
           this.game.events.emit('inventoryChanged');
@@ -1874,6 +2275,10 @@ export default class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: ring, scale: 4, alpha: 0, duration: 700, onComplete: () => ring.destroy() });
     this.burst(p.fx, p.sprite.y, 24, [0xffd060, 0xfff0a0], 160);
     this.floatText(p.fx, p.sprite.y - 50, '升級！', '#ffd060', 28);
+    if (state.tutorial && !state.tutorial.firstLevelDone) {
+      state.tutorial.firstLevelDone = true;
+      this.game.events.emit('firstLevel');
+    }
     saveGame();
   }
 
@@ -1947,9 +2352,12 @@ export default class GameScene extends Phaser.Scene {
     const p = this.player;
     p.dead = true;
     state.dead = true;
+    p.clearMoveInputs();
     p.stop();
+    this.scene.get('UI')?.resetTouchInputs?.();
     this.attackTarget = null;
     this.interactTarget = null;
+    this.lootTarget = null;
     this.sfx('death');
     Sfx.stopAmbient();
     this.tweens.add({ targets: p.sprite, angle: 90, alpha: 0.5, duration: 600 });
@@ -1991,7 +2399,19 @@ export default class GameScene extends Phaser.Scene {
     const l = {
       kind: 'rune', runeId, sprite, glow, beam, label, x, y, t: 0,
       update: (d, dt, i) => {
-        if (d < 30 && l.t > 400 && !this.player.dead) {
+        if (this.player.dead || l.t <= 360) return;
+        const pullR = this.lootTarget === l ? 110 : 78;
+        if (d < pullR && d > 12) {
+          const k = Math.min(1, (dt / 1000) * 9);
+          l.x += (this.player.fx - l.x) * k;
+          l.y += (this.player.fy - l.y) * k;
+          sprite.setPosition(l.x, l.y - 6);
+          glow.setPosition(l.x, l.y);
+          label.setPosition(l.x, l.y - 30);
+          beam.setPosition(l.x, l.y - 38);
+        }
+        if (d < 44) {
+          if (this.lootTarget === l) this.lootTarget = null;
           state.runes[runeId] = (state.runes[runeId] || 0) + 1;
           this.sfx('rune');
           this.floatText(this.player.fx, this.player.sprite.y - 34, `+1 ${def.name}`, def.color, 16);
@@ -2146,8 +2566,13 @@ export default class GameScene extends Phaser.Scene {
     const k = 1 - Math.pow(0.0005, dt / 1000);
     this.camX += (tx - this.camX) * k;
     this.camY += (ty - this.camY) * k;
-    this.camX = Phaser.Math.Clamp(this.camX, 0, Math.max(0, this.worldW - VW));
-    this.camY = Phaser.Math.Clamp(this.camY, 0, Math.max(0, this.worldH - VH));
+    const b = this.dungeon.bounds || { minX: 0, minY: 0, maxX: this.worldW, maxY: this.worldH };
+    const minCx = b.minX;
+    const maxCx = Math.max(b.minX, b.maxX - VW);
+    const minCy = b.minY;
+    const maxCy = Math.max(b.minY, b.maxY - VH);
+    this.camX = Phaser.Math.Clamp(this.camX, minCx, maxCx);
+    this.camY = Phaser.Math.Clamp(this.camY, minCy, maxCy);
     cam.setScroll(Math.round(this.camX), Math.round(this.camY));
   }
 
@@ -2213,21 +2638,64 @@ export default class GameScene extends Phaser.Scene {
     const p = this.player;
     this.pathBudget = 4;
 
-    if (this.holdMove && !p.dead) {
+    // 鍵盤 WASD / 方向鍵即時移動向量
+    const ui = this.scene.get('UI');
+    let keyActive = false;
+    if (this.moveKeys && !p.dead && !(ui && ui.activeModal)) {
+      const kx = (this.moveKeys.d.isDown || this.moveKeys.right.isDown ? 1 : 0) - (this.moveKeys.a.isDown || this.moveKeys.left.isDown ? 1 : 0);
+      const ky = (this.moveKeys.s.isDown || this.moveKeys.down.isDown ? 1 : 0) - (this.moveKeys.w.isDown || this.moveKeys.up.isDown ? 1 : 0);
+      p.setKeyVector(kx, ky);
+      keyActive = kx !== 0 || ky !== 0;
+    } else {
+      p.setKeyVector(0, 0);
+    }
+
+    const joyActive = Math.hypot(p.joyVec.x, p.joyVec.y) > 0.08;
+    const manualActive = joyActive || keyActive;
+    if (manualActive) {
+      this.holdMove = false;
+      this.interactTarget = null;
+      this.lootTarget = null;
+      this.propTarget = null;
+      if (this.attackTarget) {
+        const ae = this.attackTarget;
+        const agap = ae.dead ? 999 : Math.hypot(ae.fx - p.fx, ae.fy - p.fy) - ae.T.r - PLAYER_R;
+        if (agap > 44) this.attackTarget = null;
+      }
+    }
+
+    if (this.holdMove && !p.dead && !manualActive) {
       this.holdT += dt;
-      if (this.holdT > 140 && this.input.activePointer.leftButtonDown()) {
+      const movePtr = this.input.manager.pointers.find((ptr) => ptr.id === this.movePointerId) || this.input.activePointer;
+      const isDown = movePtr && movePtr.isDown && (!movePtr.rightButtonDown || !movePtr.rightButtonDown());
+      if (this.holdT > 140 && isDown) {
         this.holdT = 0;
-        const w = this.pointerWorld();
+        const w = this.pointerWorld(movePtr);
         this.moveTo(w.x, w.y);
       }
     }
 
     if (this.interactTarget && !p.dead && !p.dodge && !p.dash && !this.whirl) {
       const it = this.interactTarget;
-      if (Math.hypot(it.x - p.fx, it.y - p.fy) <= 90) {
+      const dist = Math.hypot(it.x - p.fx, it.y - p.fy);
+      const useDist = Math.max(115, it.r + 68);
+      if (dist <= useDist || (!p.moving && dist <= 140)) {
         p.stop();
         this.interactTarget = null;
         it.onUse();
+      }
+    }
+
+    if (this.lootTarget && !this.loot.includes(this.lootTarget)) {
+      this.lootTarget = null;
+    }
+
+    if (this.targetRing) {
+      const tgt = this.interactTarget || this.lootTarget || this.propTarget || (this.attackTarget && !this.attackTarget.dead ? { x: this.attackTarget.fx, y: this.attackTarget.fy } : null);
+      if (tgt && !p.dead) {
+        this.targetRing.setPosition(tgt.x, tgt.y).setVisible(true).setScale(1 + Math.sin(time * 0.012) * 0.12);
+      } else {
+        this.targetRing.setVisible(false);
       }
     }
 
@@ -2265,6 +2733,7 @@ export default class GameScene extends Phaser.Scene {
       if (state.buffs.frenzy > 0) state.buffs.frenzy = Math.max(0, state.buffs.frenzy - dt);
       if (state.buffs.arcane > 0) state.buffs.arcane = Math.max(0, state.buffs.arcane - dt);
       if (state.buffs.bloodBoil > 0) state.buffs.bloodBoil = Math.max(0, state.buffs.bloodBoil - dt);
+      if (state.buffs.shadowCrit > 0) state.buffs.shadowCrit = Math.max(0, state.buffs.shadowCrit - dt);
       if (state.buffs.shield > 0) {
         state.buffs.shield = Math.max(0, state.buffs.shield - dt);
         if (state.buffs.shield <= 0) state.shield = 0;
@@ -2383,7 +2852,8 @@ export default class GameScene extends Phaser.Scene {
           if (e.dead || e.isDummy) continue;
           if (Math.hypot(e.fx - ge.x, e.fy - ge.y) <= ge.r + e.T.r) {
             e.applySlow(1000);
-            const hit = this.calcCrit(s, ge.dmg * (0.9 + Math.random() * 0.2));
+            e.plagueUntil = this.time.now + 5500;
+            const hit = this.calcCrit(s, ge.dmg * (0.9 + Math.random() * 0.2), false);
             this.damageEnemy(e, hit.dmg, { crit: hit.crit, color: hit.crit ? '#ffd030' : '#80ff60', isProc: true });
           }
         }
@@ -2419,7 +2889,7 @@ export default class GameScene extends Phaser.Scene {
         if (Math.hypot(e.fx - p.fx, e.fy - p.fy) <= ob.r + e.T.r + 14) {
           if ((ob.hitCd.get(e) || 0) <= time) {
             ob.hitCd.set(e, time + 380);
-            const hit = this.calcCrit(s, ob.dmg * (0.9 + Math.random() * 0.2));
+            const hit = this.calcCrit(s, ob.dmg * (0.9 + Math.random() * 0.2), false);
             this.damageEnemy(e, hit.dmg, { crit: hit.crit, color: hit.crit ? '#ffd030' : '#c0f0ff', isProc: true });
           }
         }

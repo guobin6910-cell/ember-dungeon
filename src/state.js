@@ -1,6 +1,62 @@
 import { effectiveStats } from './systems/items.js';
 import { MAX_SKILL_LV, MAX_EFFECTIVE_SKILL_LV } from './systems/skills.js';
 import { RUNE_DEFS, getItemRuneword, emptyRunePouch } from './systems/runes.js';
+import { DEFAULT_DIFFICULTY, getDifficulty } from './systems/difficulty.js';
+import { SET_DEFS } from './systems/sets.js';
+
+export function defaultTutorial() {
+  return {
+    dummyDone: false,
+    smithDone: false,
+    enteredDungeon: false,
+    firstLootDone: false,
+    firstLevelDone: false,
+    dismissed: false,
+  };
+}
+
+const PREFS_KEY = 'ember_dungeon_prefs_v1';
+
+export function detectTouchDevice() {
+  if (typeof window === 'undefined') return false;
+  try {
+    if (window.matchMedia?.('(pointer: coarse)')?.matches) return true;
+    if ((typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0) || 'ontouchstart' in window) return true;
+  } catch { /* ignore */ }
+  return false;
+}
+
+export function loadTouchPref() {
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = window.localStorage.getItem(PREFS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.touchMode === 'boolean') return parsed.touchMode;
+      }
+    } catch { /* ignore */ }
+  }
+  return detectTouchDevice();
+}
+
+export function setTouchMode(val) {
+  const next = !!val;
+  state.touchMode = next;
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = window.localStorage.getItem(PREFS_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      window.localStorage.setItem(PREFS_KEY, JSON.stringify({ ...(parsed || {}), touchMode: next }));
+    } catch { /* ignore */ }
+  }
+  return next;
+}
+
+export function setDifficulty(id) {
+  const diff = getDifficulty(id);
+  state.difficulty = diff.id;
+  return diff;
+}
 
 /** 玩家共享狀態（GameScene 與 UIScene 共用） */
 export const state = {};
@@ -18,16 +74,21 @@ export const SLOT_NAMES = {
 };
 export const INV_SIZE = 24;
 
-export function resetState() {
+export function resetState(difficulty = null) {
   const eq = {};
   for (const s of SLOTS) eq[s] = null;
+  const prevTouch = typeof state.touchMode === 'boolean' ? state.touchMode : loadTouchPref();
+  const diffId = getDifficulty(difficulty || state.difficulty || DEFAULT_DIFFICULTY).id;
   Object.assign(state, {
     level: 1,
     xp: 0,
     gold: 0,
     shards: 0,
+    setEssence: 0,
     kills: 0,
     points: 0,
+    difficulty: diffId,
+    touchMode: prevTouch,
     mode: 'village',
     floor: 0,
     maxFloor: 1,
@@ -38,9 +99,10 @@ export function resetState() {
     skillLevels: { fire: 1, whirl: 1, heal: 1 },
     skillBar: ['fire', 'whirl', 'heal', null, null],
     runes: emptyRunePouch(),
-    buffs: { frenzy: 0, arcane: 0, bloodBoil: 0, shield: 0 },
+    buffs: { frenzy: 0, arcane: 0, bloodBoil: 0, shield: 0, shadowCrit: 0 },
     shield: 0,
     shieldMax: 0,
+    tutorial: defaultTutorial(),
     startTime: Date.now(),
     victory: false,
     dead: false,
@@ -64,6 +126,7 @@ function applyBonusObj(g, obj) {
 export function gearTotals() {
   const g = {
     atk: 0, def: 0, hp: 0, mp: 0,
+    atkPct: 0, spellPowerBonus: 0,
     lifesteal: 0, thorns: 0, moveSpeed: 0, atkSpeed: 0,
     cdr: 0, manaCostRed: 0, critChance: 0, critDmg: 0,
     dmgRed: 0, onKillHp: 0, onKillMp: 0, hpRegenPct: 0,
@@ -71,14 +134,26 @@ export function gearTotals() {
     dodgeCdr: 0, allSkills: 0,
     skillBonuses: {},
     activeAuras: [],
+    activeSets: [],
+    setEffects: {},
   };
   const auraMap = new Map();
+  const setMap = new Map();
 
   for (const slot of SLOTS) {
     const it = state.equipment[slot];
     if (!it) continue;
 
     applyBonusObj(g, effectiveStats(it));
+
+    if (it.setId && SET_DEFS[it.setId]) {
+      let entry = setMap.get(it.setId);
+      if (!entry) {
+        entry = { def: SET_DEFS[it.setId], slots: new Set() };
+        setMap.set(it.setId, entry);
+      }
+      entry.slots.add(slot);
+    }
 
     if (it.runes) {
       for (const rId of it.runes) applyBonusObj(g, RUNE_DEFS[rId]?.bonus);
@@ -102,23 +177,41 @@ export function gearTotals() {
     }
   }
 
+  for (const entry of setMap.values()) {
+    const count = entry.slots.size;
+    const def = entry.def;
+    if (count >= 2 && def.bonus2) {
+      applyBonusObj(g, def.bonus2);
+      if (def.bonus2.skillBonuses) {
+        for (const skId in def.bonus2.skillBonuses) {
+          g.skillBonuses[skId] = (g.skillBonuses[skId] || 0) + def.bonus2.skillBonuses[skId];
+        }
+      }
+    }
+    if (count >= 4 && def.effect4) {
+      g.setEffects[def.effect4] = true;
+    }
+    g.activeSets.push({ def, count, slots: Array.from(entry.slots) });
+  }
+
   g.activeAuras = Array.from(auraMap.values());
   return g;
 }
 
 export function getStats() {
   const g = gearTotals();
+  const diff = getDifficulty(state.difficulty);
   const { str, vit, int } = state.base;
   const frenzyMul = state.buffs && state.buffs.frenzy > 0 ? 1.4 : 1;
   const bloodBoil = state.buffs && state.buffs.bloodBoil > 0;
   const bloodAtkMul = bloodBoil ? 1.35 : 1;
   return {
     str, vit, int,
-    attack: Math.round((4 + str * 1.2 + g.atk) * frenzyMul * bloodAtkMul),
+    attack: Math.round((4 + str * 1.2 + g.atk) * (1 + g.atkPct) * frenzyMul * bloodAtkMul),
     defense: Math.round(g.def + vit * 0.3),
     maxHp: Math.round(60 + vit * 8 + g.hp),
     maxMp: Math.round(30 + int * 4 + g.mp),
-    spellPower: 1 + int * 0.06,
+    spellPower: 1 + int * 0.06 + g.spellPowerBonus,
     lifesteal: Math.min(0.50, g.lifesteal) + (bloodBoil ? 0.15 : 0),
     thorns: Math.min(2.50, g.thorns),
     moveSpeed: Math.min(0.85, g.moveSpeed),
@@ -127,19 +220,21 @@ export function getStats() {
     manaCostRed: Math.min(0.50, g.manaCostRed),
     critChance: Math.min(0.75, 0.10 + g.critChance),
     critDmg: 1.8 + g.critDmg,
-    dmgRed: Math.min(0.45, g.dmgRed),
+    dmgRed: Math.min(0.50, g.dmgRed),
     onKillHp: g.onKillHp,
     onKillMp: g.onKillMp,
     hpRegenPct: g.hpRegenPct,
     mpRegenBonus: g.mpRegenBonus,
     goldFind: Math.min(2.0, g.goldFind),
-    magicFind: Math.min(2.50, g.magicFind),
+    magicFind: Math.min(2.50, g.magicFind) + diff.mfBonus,
     chainProc: Math.min(0.50, g.chainProc),
     novaProc: Math.min(0.50, g.novaProc),
-    dodgeCdr: Math.min(0.50, g.dodgeCdr),
+    dodgeCdr: Math.min(0.65, g.dodgeCdr),
     allSkills: g.allSkills,
     skillBonuses: g.skillBonuses,
     activeAuras: g.activeAuras,
+    activeSets: g.activeSets,
+    setEffects: g.setEffects,
   };
 }
 

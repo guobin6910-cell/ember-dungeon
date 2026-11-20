@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { SLOTS } from '../state.js';
 import { SKILL_DEFS, SKILL_LIST } from './skills.js';
 import { MAX_SOCKETS } from './runes.js';
+import { SET_DEFS, SET_LIST, getSetDef } from './sets.js';
 
 export const MAX_ENHANCE = 10;
 
@@ -215,6 +216,7 @@ function rollSpecialAffixes(quality, ilvl, guaranteed = []) {
   let count = 0;
   if (quality === 'blue') count = Math.random() < 0.35 ? 1 : 0;
   else if (quality === 'gold') count = Math.random() < 0.85 ? Phaser.Math.Between(1, 2) : 0;
+  else if (quality === 'set') count = Phaser.Math.Between(1, 2);
 
   for (let i = 0; i < count; i++) {
     const def = pickWeightedAffix(used);
@@ -238,6 +240,7 @@ function rollQuality(bonus = 0) {
 function rollSockets(quality) {
   const r = Math.random();
   if (quality === 'special') return r < 0.55 ? 2 : 3;
+  if (quality === 'set') return r < 0.20 ? 1 : r < 0.72 ? 2 : 3;
   if (quality === 'gold') {
     if (r < 0.15) return 0;
     if (r < 0.40) return 1;
@@ -261,7 +264,7 @@ function affixValue(stat, ilvl, mult) {
 }
 
 function rollStats(slot, quality, ilvl) {
-  const qm = { white: 1, blue: 1.3, gold: 1.75, special: 2.1 }[quality] || 1;
+  const qm = { white: 1, blue: 1.3, gold: 1.75, set: 1.95, special: 2.1 }[quality] || 1;
   const stats = {};
   if (slot === 'weapon') stats.atk = Math.round((3 + ilvl * 2) * rnd(0.8, 1.2) * qm);
   else if (slot === 'armor') stats.def = Math.round((3 + ilvl * 1.6) * rnd(0.8, 1.2) * qm);
@@ -283,7 +286,7 @@ function rollStats(slot, quality, ilvl) {
     if (Math.random() < 0.5) stats.mp = Math.round((8 + ilvl * 3) * rnd(0.8, 1.2) * qm);
     else stats.hp = Math.round((12 + ilvl * 5) * rnd(0.8, 1.2) * qm);
   }
-  const nAff = quality === 'white' ? 0 : quality === 'blue' ? 1 : quality === 'special' ? 3 : Phaser.Math.Between(2, 3);
+  const nAff = quality === 'white' ? 0 : quality === 'blue' ? 1 : (quality === 'special' || quality === 'set') ? 3 : Phaser.Math.Between(2, 3);
   const pool = Phaser.Utils.Array.Shuffle(['atk', 'def', 'hp', 'mp']);
   const affixes = [];
   for (let i = 0; i < nAff; i++) {
@@ -348,6 +351,33 @@ export function generateItem(ilvl, bonus = 0, forceQuality = null, forceSlot = n
   };
 }
 
+export function generateSetItem(setId = null, ilvl = 1, forceSlot = null, ownedSlots = null) {
+  const def = (setId && getSetDef(setId)) || Phaser.Utils.Array.GetRandom(SET_LIST);
+  let slot = forceSlot && def.slots.includes(forceSlot) ? forceSlot : null;
+  if (!slot) {
+    if (ownedSlots && ownedSlots.size) {
+      const missing = def.slots.filter((s) => !ownedSlots.has(s));
+      if (missing.length && Math.random() < 0.78) slot = Phaser.Utils.Array.GetRandom(missing);
+    }
+    if (!slot) slot = Phaser.Utils.Array.GetRandom(def.slots);
+  }
+  const { stats } = rollStats(slot, 'set', ilvl);
+  return {
+    id: nextId++,
+    kind: 'equip',
+    slot,
+    quality: 'set',
+    setId: def.id,
+    name: def.pieces[slot],
+    ilvl,
+    stats,
+    specials: rollSpecialAffixes('set', ilvl),
+    sockets: rollSockets('set'),
+    runes: [],
+    enhance: 0,
+  };
+}
+
 export function generateSkillBook(forceSkillId = null) {
   let id = forceSkillId;
   if (!id) {
@@ -383,7 +413,7 @@ export function effectiveStats(item, enhanceOverride = null) {
 }
 
 export function enhanceCost(item) {
-  const qm = { white: 0.8, blue: 1.2, gold: 1.8, special: 2.4 }[item.quality] || 1;
+  const qm = { white: 0.8, blue: 1.2, gold: 1.8, set: 2.1, special: 2.4 }[item.quality] || 1;
   return Math.round((25 + item.ilvl * 10) * ((item.enhance || 0) + 1) * qm);
 }
 
@@ -394,7 +424,7 @@ export function enhanceItem(item) {
 }
 
 export function reforgeCost(item) {
-  const qm = { white: 0.8, blue: 1.2, gold: 2.0, special: 2.4 }[item.quality] || 1;
+  const qm = { white: 0.8, blue: 1.2, gold: 2.0, set: 2.1, special: 2.4 }[item.quality] || 1;
   return Math.round((20 + item.ilvl * 8) * qm);
 }
 
@@ -410,6 +440,30 @@ export function reforgeItem(item) {
     item.specials = rollSpecialAffixes(item.quality, item.ilvl);
   }
   return true;
+}
+
+export function convertSetPieceCost(item) {
+  return { gold: 150 + (item?.ilvl || 1) * 15, essence: 1 };
+}
+
+export function convertSetPiece(item, ownedSlots = null) {
+  if (!item || item.quality !== 'set' || !item.setId) return false;
+  const def = getSetDef(item.setId);
+  if (!def) return false;
+  const others = def.slots.filter((s) => s !== item.slot);
+  if (!others.length) return false;
+  const missing = ownedSlots && ownedSlots.size ? others.filter((s) => !ownedSlots.has(s)) : [];
+  const pool = missing.length ? missing : others;
+  const nextSlot = Phaser.Utils.Array.GetRandom(pool);
+  const { stats } = rollStats(nextSlot, 'set', item.ilvl || 1);
+  item.slot = nextSlot;
+  item.name = def.pieces[nextSlot];
+  item.stats = stats;
+  return true;
+}
+
+export function craftSetCost(ilvl) {
+  return { gold: 200 + (ilvl || 1) * 25, shards: 3, essence: 2 };
 }
 
 export function punchSocketCost(item) {
@@ -430,15 +484,16 @@ export function forgeCost(tier, ilvl) {
 }
 
 export function dismantleReward(item) {
-  const baseShards = { white: 1, blue: 2, gold: 4, special: 7 }[item.quality] || 1;
+  const baseShards = { white: 1, blue: 2, gold: 4, set: 5, special: 7 }[item.quality] || 1;
   return {
     gold: itemValue(item),
     shards: baseShards + Math.floor((item.enhance || 0) / 2),
+    essence: item.quality === 'set' ? 1 : 0,
   };
 }
 
 export function itemValue(item) {
   if (item.kind === 'book') return 45;
-  const q = { white: 1, blue: 3, gold: 8, special: 14 }[item.quality] || 1;
+  const q = { white: 1, blue: 3, gold: 8, set: 12, special: 14 }[item.quality] || 1;
   return Math.round((5 + item.ilvl * 3) * q * (1 + (item.enhance || 0) * 0.25));
 }

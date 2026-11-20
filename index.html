@@ -2,18 +2,43 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#050304" />
   <title>餘燼地城</title>
   <link rel="icon" href="data:," />
   <style>
-    html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
-    #game { width: 100%; height: 100%; }
-    canvas { display: block; }
+    * { -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%; height: 100dvh;
+      background: #000; overflow: hidden; overscroll-behavior: none;
+      touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    }
+    #game { width: 100%; height: 100%; touch-action: none; }
+    canvas { display: block; touch-action: none; }
+    #rotate-hint {
+      display: none;
+      position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 9999;
+      background: rgba(20, 12, 8, 0.92); color: #ffd890; border: 1px solid #8a5a28;
+      border-radius: 16px; padding: 6px 14px; font-size: 13px; white-space: nowrap;
+      font-family: "Microsoft JhengHei", sans-serif; box-shadow: 0 2px 10px rgba(0,0,0,0.65);
+    }
+    #rotate-hint button {
+      background: none; border: none; color: #ff9870; margin-left: 8px; font-size: 14px;
+      cursor: pointer; padding: 0 2px;
+    }
+    @media (orientation: portrait) and (max-width: 760px) {
+      #rotate-hint:not(.dismissed) { display: flex; align-items: center; }
+    }
   </style>
 </head>
 <body>
   <div id="game"></div>
+  <div id="rotate-hint">
+    <span>📱 建議橫向螢幕遊玩以獲得最佳視野與雙手操作體驗</span>
+    <button type="button" aria-label="關閉提示" onclick="this.parentElement.classList.add('dismissed'); this.blur();">X</button>
+  </div>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
-

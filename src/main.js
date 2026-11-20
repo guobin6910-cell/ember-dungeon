@@ -13,6 +13,7 @@ const game = new Phaser.Game({
   height: 720,
   backgroundColor: '#000000',
   antialias: true,
+  input: { activePointers: 4 },
   physics: { default: 'arcade', arcade: { debug: false } },
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
   scene: [BootScene, MenuScene, GameScene, UIScene, EndScene],

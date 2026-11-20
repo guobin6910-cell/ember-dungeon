@@ -716,6 +716,18 @@ const SHARD = [
 ];
 const SHARD_PAL = { k: OUT, p: '#c040ff', P: '#ff80ff', W: '#fff0ff' };
 
+const ESSENCE = [
+  '...kk...',
+  '..keEk..',
+  '.keWWEk.',
+  'keWEWEek',
+  'keEWWEek',
+  '.keEEek.',
+  '..keek..',
+  '...kk...',
+];
+const ESSENCE_PAL = { k: OUT, e: '#18a858', E: '#40f490', W: '#d8fff0' };
+
 // ---------------------------------------------------------------- 地城物件、陷阱、祭壇與毒蛛
 const PROP_CHEST = [
   '..kkkkkkkkkk..',
@@ -1212,6 +1224,7 @@ export function generateTextures(scene) {
   pixTex(scene, 'icon_accessory', ICON_ACC, ICON_PAL);
   pixTex(scene, 'icon_book', ICON_BOOK, BOOK_PAL);
   pixTex(scene, 'shard', SHARD, SHARD_PAL);
+  pixTex(scene, 'essence', ESSENCE, ESSENCE_PAL);
   pixTex(scene, 'coin', COIN, COIN_PAL);
   pixTex(scene, 'bones', BONES, BONE_PAL);
   pixTex(scene, 'skull', SKULL, BONE_PAL);

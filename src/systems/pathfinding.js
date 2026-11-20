@@ -87,19 +87,19 @@ export class PathFinder {
   }
 
   /** 世界座標尋路並做路徑平滑，回傳世界座標點陣列 */
-  worldPath(fx, fy, wx, wy, radius = 12, maxNodes = 5000) {
+  worldPath(fx, fy, wx, wy, radius = 12, maxNodes = 5000, smooth = true) {
     const d = this.d;
     const sx = Math.floor(fx / TILE), sy = Math.floor(fy / TILE);
     let tx = Math.floor(wx / TILE), ty = Math.floor(wy / TILE);
     let exact = true;
     if (!d.isFloor(tx, ty)) {
-      const n = d.nearestFloor(tx, ty, 4);
+      const n = d.nearestFloor(tx, ty, 8);
       if (!n) return null;
       tx = n.x; ty = n.y; exact = false;
     }
     let start = { x: sx, y: sy };
     if (!d.isFloor(sx, sy)) {
-      const n = d.nearestFloor(sx, sy, 2);
+      const n = d.nearestFloor(sx, sy, 3);
       if (!n) return null;
       start = n;
     }
@@ -107,17 +107,24 @@ export class PathFinder {
     if (!tiles) return null;
     const pts = tiles.map((p) => ({ x: p.x * TILE + TILE / 2, y: p.y * TILE + TILE / 2 }));
     if (exact) {
-      if (pts.length) pts[pts.length - 1] = { x: wx, y: wy };
-      else pts.push({ x: wx, y: wy });
+      if (pts.length && Math.hypot(pts[pts.length - 1].x - wx, pts[pts.length - 1].y - wy) < 8) {
+        pts[pts.length - 1] = { x: wx, y: wy };
+      } else if (pts.length) {
+        pts[pts.length - 1] = { x: wx, y: wy };
+      } else {
+        pts.push({ x: wx, y: wy });
+      }
     } else if (!pts.length) {
       pts.push({ x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 });
     }
-    // 路徑平滑（拉繩法）
+    if (!smooth) return pts;
+    // 路徑平滑（拉繩法，保留較大身體安全邊距防止擦撞牆角）
+    const safeR = Math.max(radius, 17);
     const out = [];
     let ax = fx, ay = fy, i = 0;
     while (i < pts.length) {
       let j = pts.length - 1;
-      while (j > i && !d.lineClear(ax, ay, pts[j].x, pts[j].y, radius)) j--;
+      while (j > i && !d.lineClear(ax, ay, pts[j].x, pts[j].y, safeR)) j--;
       out.push(pts[j]);
       ax = pts[j].x; ay = pts[j].y;
       i = j + 1;

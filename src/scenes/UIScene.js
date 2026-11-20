@@ -1,14 +1,16 @@
 import Phaser from 'phaser';
 import {
   state, getStats, getEffectiveSkillLevel, socketRune, unsocketRunes, xpToNext, SLOTS, SLOT_NAMES, INV_SIZE,
-  equip, unequip, allocate, useSkillBook, assignSkillSlot, clampVitals,
+  equip, unequip, allocate, useSkillBook, assignSkillSlot, clampVitals, setDifficulty, setTouchMode,
 } from '../state.js';
+import { DIFFICULTY_LIST, getDifficulty } from '../systems/difficulty.js';
 import { txt, SERIF, QUALITY_COLORS, QUALITY_HEX, QUALITY_NAMES } from '../ui.js';
 import {
   STAT_NAMES, itemValue, itemDisplayName, effectiveStats, MAX_ENHANCE, formatSpecialAffix,
   enhanceCost, enhanceItem, reforgeCost, reforgeItem, punchSocketCost, punchSocket,
-  forgeCost, dismantleReward, generateItem,
+  forgeCost, dismantleReward, generateItem, generateSetItem, convertSetPieceCost, convertSetPiece, craftSetCost,
 } from '../systems/items.js';
+import { SET_LIST, getSetDef } from '../systems/sets.js';
 import {
   MAX_SOCKETS, RUNE_DEFS, RUNE_LIST, RUNEWORD_LIST, getItemRuneword, runeDisplayName,
 } from '../systems/runes.js';
@@ -40,12 +42,16 @@ export default class UIScene extends Phaser.Scene {
     txt(this, 20, H - 47, '法力', 14, '#80a0ff').setOrigin(0, 0.5);
     this.xpText = txt(this, 812, H - 14, '', 12, '#d0c0ff').setOrigin(0, 0.5);
 
-    // ---- 左上資訊
+    // ---- 左上資訊（附半透明深色底板避免與背景 NPC 標籤混淆）
+    const hudBox = this.add.graphics();
+    hudBox.fillStyle(0x0a0706, 0.58).fillRoundedRect(8, 6, 344, 128, 6);
+    hudBox.lineStyle(1, 0x4a3420, 0.65).strokeRoundedRect(8, 6, 344, 128, 6);
     this.locText = txt(this, 16, 12, '', 18, '#ffd890');
+    this.diffBadge = txt(this, 200, 14, '', 16, '#ffd880');
     this.lvlText = txt(this, 16, 38, '', 16, '#e0d0b8');
     this.pointsText = txt(this, 16, 62, '', 14, '#80ff80');
     this.buffText = txt(this, 16, 86, '', 14, '#ffa850');
-    this.auraText = txt(this, 16, 110, '', 13, '#70f8e0');
+    this.auraText = txt(this, 16, 110, '', 13, '#70f8e0', { wordWrap: { width: 328, useAdvancedWrap: true } });
 
     // ---- 小地圖
     this.mmTex = this.textures.exists('minimap') ? this.textures.get('minimap') : this.textures.createCanvas('minimap', MM.w, MM.h);
@@ -59,10 +65,28 @@ export default class UIScene extends Phaser.Scene {
     this.mmDots = this.add.graphics();
     this.mmInited = false;
 
-    this.add.image(MM.x + 8, MM.y + MM.h + 20, 'coin').setScale(1.4);
-    this.goldText = txt(this, MM.x + 22, MM.y + MM.h + 20, '', 17, '#f0c040').setOrigin(0, 0.5);
-    this.add.image(MM.x + 130, MM.y + MM.h + 20, 'shard').setScale(1.1);
-    this.shardText = txt(this, MM.x + 144, MM.y + MM.h + 20, '', 17, '#ff90ff').setOrigin(0, 0.5);
+    this.add.image(MM.x + 8, MM.y + MM.h + 20, 'coin').setScale(1.3);
+    this.goldText = txt(this, MM.x + 22, MM.y + MM.h + 20, '', 16, '#f0c040').setOrigin(0, 0.5);
+    this.add.image(MM.x + 92, MM.y + MM.h + 20, 'shard').setScale(1.05);
+    this.shardText = txt(this, MM.x + 106, MM.y + MM.h + 20, '', 16, '#ff90ff').setOrigin(0, 0.5);
+    this.add.image(MM.x + 174, MM.y + MM.h + 20, 'essence').setScale(1.05);
+    this.essenceText = txt(this, MM.x + 188, MM.y + MM.h + 20, '', 16, '#48f298').setOrigin(0, 0.5);
+
+    // ---- 新手引導提示條（置中頂部，Boss 戰時自動讓位，可按 X 關閉）
+    this.tutBanner = this.add.container(0, 0).setDepth(55).setVisible(false);
+    const tbBg = this.add.rectangle(W / 2, 74, 620, 34, 0x16100a, 0.90).setStrokeStyle(1.5, 0xc89038);
+    this.tutText = txt(this, W / 2 - 12, 74, '', 14, '#ffe898').setOrigin(0.5);
+    const tbClose = this.add.rectangle(W / 2 + 290, 74, 24, 24, 0x2a1810).setStrokeStyle(1, 0x905828).setInteractive({ useHandCursor: true });
+    const tbCloseT = this.add.text(W / 2 + 290, 74, 'X', { fontFamily: 'Arial, sans-serif', fontSize: '14px', fontStyle: 'bold', color: '#ffd898' }).setOrigin(0.5);
+    tbClose.on('pointerdown', () => {
+      if (state.tutorial) state.tutorial.dismissed = true;
+      this.tutBanner.setVisible(false);
+      this.game_.updateTutorialVisuals?.();
+      saveGame();
+    });
+    this.tutBanner.add([tbBg, this.tutText, tbClose, tbCloseT]);
+    this.tutFlashMsg = '';
+    this.tutFlashUntil = 0;
 
     // ---- 訊息與受傷紅暈
     this.msgs = [];
@@ -98,6 +122,16 @@ export default class UIScene extends Phaser.Scene {
     };
     this.onOpenForge = () => this.setModal(this.activeModal === 'forge' ? null : 'forge');
     this.onOpenPortal = () => this.setModal(this.activeModal === 'portal' ? null : 'portal');
+    this.onFirstLoot = () => {
+      this.tutFlashMsg = '拾獲新裝備！按 [B] 或點右下「背包」穿上裝備提升戰力';
+      this.tutFlashUntil = this.time.now + 9000;
+      this.showMsg('拾獲首批裝備！按 B 打開背包穿上裝備！', '#60ff98');
+    };
+    this.onFirstLevel = () => {
+      this.tutFlashMsg = '角色升級！按 [C] 開啟面板將屬性點分配至力量／體質／智力';
+      this.tutFlashUntil = this.time.now + 9000;
+      this.showMsg('恭喜升級！按 C 分配屬性點大幅強化實力！', '#ffd860');
+    };
 
     this.game.events.on('msg', this.onMsg);
     this.game.events.on('playerHurt', this.onHurt);
@@ -106,7 +140,11 @@ export default class UIScene extends Phaser.Scene {
     this.game.events.on('bossEnd', this.onBossEnd);
     this.game.events.on('openForge', this.onOpenForge);
     this.game.events.on('openPortal', this.onOpenPortal);
+    this.game.events.on('firstLoot', this.onFirstLoot);
+    this.game.events.on('firstLevel', this.onFirstLevel);
     this.events.once('shutdown', () => {
+      this.resetTouchInputs?.();
+      if (window.__ember?.ui === this) window.__ember.ui = null;
       this.game.events.off('msg', this.onMsg);
       this.game.events.off('playerHurt', this.onHurt);
       this.game.events.off('inventoryChanged', this.onInv);
@@ -114,17 +152,24 @@ export default class UIScene extends Phaser.Scene {
       this.game.events.off('bossEnd', this.onBossEnd);
       this.game.events.off('openForge', this.onOpenForge);
       this.game.events.off('openPortal', this.onOpenPortal);
+      this.game.events.off('firstLoot', this.onFirstLoot);
+      this.game.events.off('firstLevel', this.onFirstLevel);
     });
 
-    const hintMsg = state.mode === 'village'
-      ? '左鍵點擊移動與NPC互動｜1~5 技能｜B 背包｜G 傳送門｜M 靜音'
-      : '左鍵點地面移動｜左鍵點敵人攻擊｜1~5 技能｜空白鍵 翻滾｜B 背包｜T 回村';
+    const hintMsg = state.touchMode
+      ? (state.mode === 'village'
+        ? '左下搖桿移動｜右下按鈕互動／攻擊｜點技能自動瞄準｜右上可切換「觸控」'
+        : '左下搖桿移動｜右下「攻擊／互動／翻滾」｜點下方 1~5 技能自動瞄準敵人')
+      : (state.mode === 'village'
+        ? 'WASD/方向鍵或左鍵移動｜點擊NPC自動互動｜1~5 技能｜B 背包｜G 傳送門｜M 靜音'
+        : 'WASD/方向鍵或左鍵移動｜空白/右鍵 翻滾｜1~5 技能｜B 背包｜T 回村');
     this.hint = txt(this, W / 2, H - 120, hintMsg, 15, '#c8b898').setOrigin(0.5);
     this.tweens.add({ targets: this.hint, alpha: 0, delay: 9000, duration: 1500 });
 
     this.buildSkillBar();
     this.buildBossBar();
     this.buildQuickButtons();
+    this.buildTouchControls();
 
     this.modal = this.add.container(0, 0).setDepth(100).setVisible(false);
     this.tooltip = this.add.container(0, 0).setDepth(220).setVisible(false);
@@ -134,15 +179,22 @@ export default class UIScene extends Phaser.Scene {
     this.forgeSelectedId = null;
     this.forgeSlot = 'weapon';
     this.forgePage = 0;
+    this.forgeMode = 'craft';
+    this.forgeSetId = 'bone_warlord';
+    this.forgeSetSlot = 'helm';
     this.runeTargetId = null;
     this.runeRecipePage = 0;
     this.portalFloor = state.maxFloor;
+    this.bagSellMode = false;
+    this.selectedBagIdx = null;
+    this.selectedEquipSlot = null;
 
     this.input.keyboard.on('keydown-B', () => this.togglePanel());
     this.input.keyboard.on('keydown-I', () => this.togglePanel());
     this.input.keyboard.on('keydown-C', () => this.togglePanel());
     this.input.keyboard.on('keydown-ESC', () => { if (this.activeModal) this.setModal(null); });
     this.input.mouse.disableContextMenu();
+    this.updateTouchVisibility();
 
     window.__ember.ui = this;
   }
@@ -153,6 +205,7 @@ export default class UIScene extends Phaser.Scene {
     const wasOpen = !!this.activeModal;
     this.activeModal = kind;
     this.tooltip.setVisible(false);
+    this.resetTouchInputs();
     Sfx.play('click');
     if (kind) {
       this.modal.setVisible(true);
@@ -161,9 +214,13 @@ export default class UIScene extends Phaser.Scene {
       else if (kind === 'portal') this.refreshPortal();
       if (!wasOpen) this.scene.pause('Game');
     } else {
+      this.bagSellMode = false;
+      this.selectedBagIdx = null;
+      this.selectedEquipSlot = null;
       this.modal.removeAll(true).setVisible(false);
       if (wasOpen) this.scene.resume('Game');
     }
+    this.updateTouchVisibility();
   }
 
   togglePanel() {
@@ -172,13 +229,15 @@ export default class UIScene extends Phaser.Scene {
 
   get panelOpen() { return this.activeModal === 'panel'; }
 
-  // =========================================================== 技能列（1~5 + 空白鍵）
+  // =========================================================== 技能列（1~5 + 空白鍵，可滑鼠/觸控點擊）
   buildSkillBar() {
     this.skillSlots = [];
+    this.skillSlotPos = [];
     for (let i = 0; i < 6; i++) {
       const x = 392 + i * 72, y = H - 54;
       const isDodge = i === 5;
-      this.add.rectangle(x, y, 58, 58, 0x050304, 1).setStrokeStyle(2, 0x6a4a2a);
+      const box = this.add.rectangle(x, y, 58, 58, 0x050304, 1).setStrokeStyle(2, 0x6a4a2a);
+      const hit = this.add.rectangle(x, y, 68, 70, 0x000000, 0.001).setInteractive({ useHandCursor: true });
       const icon = this.add.image(x, y, isDodge ? 'sk_dodge' : 'sk_fire').setScale(0.95);
       const cdG = this.add.graphics();
       const cdT = txt(this, x, y, '', 17, '#ffffff').setOrigin(0.5);
@@ -186,7 +245,19 @@ export default class UIScene extends Phaser.Scene {
       const mpT = txt(this, x + 25, y + 27, '', 11, '#80a0ff').setOrigin(1, 1);
       const lvT = txt(this, x + 25, y - 27, '', 10, '#70f0b0').setOrigin(1, 0);
       const nameT = txt(this, x, y - 39, isDodge ? '翻滾' : '', 11, '#c8b898').setOrigin(0.5);
-      this.skillSlots.push({ i, isDodge, x, y, icon, cdG, cdT, mpT, lvT, nameT });
+
+      hit.on('pointerdown', () => {
+        Sfx.init();
+        Sfx.startAmbient();
+        if (this.activeModal || this.game_.player.dead || this.game_.transitioning) return;
+        box.setStrokeStyle(2.5, 0xffe080);
+        this.time.delayedCall(120, () => { if (box.active) box.setStrokeStyle(2, 0x6a4a2a); });
+        if (isDodge) this.game_.tryDodge({ smartAim: true });
+        else this.game_.castSlot(i, { smartAim: true });
+      });
+
+      this.skillSlots.push({ i, isDodge, x, y, box, hit, icon, cdG, cdT, mpT, lvT, nameT });
+      this.skillSlotPos.push({ i, isDodge, x, y });
     }
   }
 
@@ -264,20 +335,26 @@ export default class UIScene extends Phaser.Scene {
 
   buildQuickButtons() {
     const y = H - 54;
+    const w = 76;
     const mkBtn = (x, label, cb) => {
-      const bg = this.add.rectangle(x, y, 84, 40, 0x18100d, 0.95).setStrokeStyle(2, 0x6a4a2a).setInteractive({ useHandCursor: true });
-      const t = txt(this, x, y, label, 13, '#e0c090').setOrigin(0.5);
+      const bg = this.add.rectangle(x, y, w, 40, 0x18100d, 0.95).setStrokeStyle(2, 0x6a4a2a).setInteractive({ useHandCursor: true });
+      const t = txt(this, x, y, label, 12, '#e0c090').setOrigin(0.5);
+      const fit = () => {
+        t.setScale(1);
+        if (t.width > w - 8) t.setScale((w - 8) / t.width);
+      };
+      fit();
       bg.on('pointerover', () => { bg.setFillStyle(0x2a1810, 0.98); t.setColor('#ffe0a0'); });
       bg.on('pointerout', () => { bg.setFillStyle(0x18100d, 0.95); t.setColor('#e0c090'); });
       bg.on('pointerdown', cb);
-      return { bg, t, x, y };
+      return { bg, t, x, y, fit };
     };
-    this.navBtn = mkBtn(934, state.mode === 'village' ? '地城 [G]' : '回村 [T]', () => {
+    this.navBtn = mkBtn(892, state.mode === 'village' ? '地城[G]' : '回村[T]', () => {
       if (state.mode === 'village') this.setModal('portal');
       else this.game_.enterVillage();
     });
-    this.bagBtn = mkBtn(1028, '背包 [B]', () => this.togglePanel());
-    this.saveBtn = mkBtn(1122, '存檔', () => {
+    this.bagBtn = mkBtn(974, '背包[B]', () => this.togglePanel());
+    this.saveBtn = mkBtn(1056, '存檔', () => {
       Sfx.init();
       if (saveGame()) {
         Sfx.play('book');
@@ -287,22 +364,197 @@ export default class UIScene extends Phaser.Scene {
         this.game_.msg('存檔失敗（瀏覽器儲存空間受限）', '#ff8080');
       }
     });
-    this.muteBtn = mkBtn(1216, '音效：開', () => {
+    this.touchBtn = mkBtn(1138, state.touchMode ? '觸控:開' : '觸控:關', () => {
+      Sfx.init();
+      Sfx.play('click');
+      const next = setTouchMode(!state.touchMode);
+      this.updateTouchVisibility();
+      this.game_.msg(next ? '已開啟手機觸控操作介面' : '已切換為電腦鍵鼠操作', '#80e8ff');
+    });
+    this.muteBtn = mkBtn(1220, '音效:開', () => {
       Sfx.init();
       const m = Sfx.toggleMute();
       this.game_.msg(m ? '音效：關閉' : '音效：開啟', '#aaaaaa');
     });
   }
 
+  // =========================================================== 手機觸控虛擬操作層
+  buildTouchControls() {
+    this.joyCenter = { x: 136, y: 508 };
+    this.joyRadius = 72;
+    this.joyKnobMax = 52;
+    this.joyPointerId = null;
+    this.attackPointerId = null;
+
+    const atkPos = { x: 1174, y: 526, r: 52 };
+    const dodPos = { x: 1062, y: 560, r: 36 };
+    const intPos = { x: 1174, y: 412, r: 38 };
+    this.touchBtnPos = {
+      joystick: { x: this.joyCenter.x, y: this.joyCenter.y },
+      attack: { x: atkPos.x, y: atkPos.y },
+      dodge: { x: dodPos.x, y: dodPos.y },
+      interact: { x: intPos.x, y: intPos.y },
+    };
+
+    const c = this.add.container(0, 0).setDepth(45);
+
+    // 虛擬搖桿底座與搖桿頭
+    const jBase = this.add.circle(this.joyCenter.x, this.joyCenter.y, this.joyRadius, 0x0a0706, 0.42)
+      .setStrokeStyle(2.5, 0x906840, 0.7);
+    const jInner = this.add.circle(this.joyCenter.x, this.joyCenter.y, 26, 0x1a120d, 0.35)
+      .setStrokeStyle(1, 0x6a4a2a, 0.5);
+    const arrows = [
+      txt(this, this.joyCenter.x, this.joyCenter.y - 54, '▲', 12, '#9a7a58').setOrigin(0.5),
+      txt(this, this.joyCenter.x, this.joyCenter.y + 54, '▼', 12, '#9a7a58').setOrigin(0.5),
+      txt(this, this.joyCenter.x - 54, this.joyCenter.y, '◀', 12, '#9a7a58').setOrigin(0.5),
+      txt(this, this.joyCenter.x + 54, this.joyCenter.y, '▶', 12, '#9a7a58').setOrigin(0.5),
+    ];
+    this.joyKnob = this.add.circle(this.joyCenter.x, this.joyCenter.y, 28, 0xc89048, 0.72)
+      .setStrokeStyle(2.5, 0xffe0a0, 0.9);
+    c.add([jBase, jInner, ...arrows, this.joyKnob]);
+
+    // 右側動作按鈕：攻擊 / 翻滾 / 互動
+    this.touchAttackBg = this.add.circle(atkPos.x, atkPos.y, atkPos.r, 0x260c0c, 0.78)
+      .setStrokeStyle(3, 0xd04040, 0.9);
+    const atkIcon = this.add.image(atkPos.x, atkPos.y - 10, 'sword').setScale(1.15).setRotation(0.65);
+    const atkLabel = txt(this, atkPos.x, atkPos.y + 24, '攻擊', 15, '#ffd0c0').setOrigin(0.5);
+
+    this.touchDodgeBg = this.add.circle(dodPos.x, dodPos.y, dodPos.r, 0x0e1828, 0.80)
+      .setStrokeStyle(2.5, 0x5090e0, 0.9);
+    const dodIcon = this.add.image(dodPos.x, dodPos.y - 6, 'sk_dodge').setScale(0.62);
+    const dodLabel = txt(this, dodPos.x, dodPos.y + 18, '翻滾', 11, '#b8e0ff').setOrigin(0.5);
+    this.touchDodgeCdT = txt(this, dodPos.x, dodPos.y, '', 16, '#ffffff').setOrigin(0.5);
+
+    this.touchInteractBg = this.add.circle(intPos.x, intPos.y, intPos.r, 0x16141a, 0.78)
+      .setStrokeStyle(2, 0x807060, 0.75);
+    this.touchInteractT = txt(this, intPos.x, intPos.y, '互動', 13, '#d0c0a8').setOrigin(0.5);
+
+    c.add([
+      this.touchAttackBg, atkIcon, atkLabel,
+      this.touchDodgeBg, dodIcon, dodLabel, this.touchDodgeCdT,
+      this.touchInteractBg, this.touchInteractT,
+    ]);
+    this.touchControls = c;
+
+    // 多指獨立追蹤：左區搖桿、右區攻擊(支援按住連擊)/翻滾/互動
+    this.input.on('pointerdown', (p) => {
+      if (!state.touchMode || this.activeModal || this.game_?.player?.dead || this.game_?.transitioning) return;
+      if (p.x >= 8 && p.x <= 276 && p.y >= 376 && p.y < H - 94 && this.joyPointerId === null) {
+        Sfx.init();
+        Sfx.startAmbient();
+        this.joyPointerId = p.id;
+        this.updateJoystickFromPointer(p);
+        return;
+      }
+      if (Math.hypot(p.x - atkPos.x, p.y - atkPos.y) <= atkPos.r + 8 && this.attackPointerId === null) {
+        Sfx.init();
+        Sfx.startAmbient();
+        this.attackPointerId = p.id;
+        this.touchAttackBg.setFillStyle(0x4a1616, 0.95).setStrokeStyle(3, 0xff9070);
+        this.game_.attackNearest();
+        return;
+      }
+      if (Math.hypot(p.x - dodPos.x, p.y - dodPos.y) <= dodPos.r + 8) {
+        Sfx.init();
+        Sfx.startAmbient();
+        this.touchDodgeBg.setFillStyle(0x1a304a, 0.95);
+        this.time.delayedCall(120, () => { if (this.touchDodgeBg.active) this.touchDodgeBg.setFillStyle(0x0e1828, 0.80); });
+        this.game_.tryDodge({ smartAim: true });
+        return;
+      }
+      if (Math.hypot(p.x - intPos.x, p.y - intPos.y) <= intPos.r + 8) {
+        Sfx.init();
+        Sfx.startAmbient();
+        this.game_.interactNearest();
+      }
+    });
+
+    this.input.on('pointermove', (p) => {
+      if (p.id === this.joyPointerId && state.touchMode && !this.activeModal) {
+        this.updateJoystickFromPointer(p);
+      }
+    });
+
+    const releasePointer = (p) => {
+      if (p.id === this.joyPointerId) {
+        this.joyPointerId = null;
+        this.joyKnob.setPosition(this.joyCenter.x, this.joyCenter.y);
+        this.game_?.player?.clearJoystick?.();
+      }
+      if (p.id === this.attackPointerId) {
+        this.attackPointerId = null;
+        this.touchAttackBg.setFillStyle(0x260c0c, 0.78).setStrokeStyle(3, 0xd04040, 0.9);
+      }
+    };
+    this.input.on('pointerup', releasePointer);
+    this.input.on('gameout', () => this.resetTouchInputs());
+  }
+
+  updateJoystickFromPointer(p) {
+    const dx = p.x - this.joyCenter.x;
+    const dy = p.y - this.joyCenter.y;
+    const d = Math.hypot(dx, dy);
+    const max = this.joyKnobMax;
+    const clamped = Math.min(d, max);
+    const ang = Math.atan2(dy, dx);
+    const kx = d > 0.001 ? this.joyCenter.x + Math.cos(ang) * clamped : this.joyCenter.x;
+    const ky = d > 0.001 ? this.joyCenter.y + Math.sin(ang) * clamped : this.joyCenter.y;
+    this.joyKnob.setPosition(kx, ky);
+    this.game_?.player?.setMoveVector?.(d > 0.001 ? (Math.cos(ang) * clamped) / max : 0, d > 0.001 ? (Math.sin(ang) * clamped) / max : 0);
+  }
+
+  resetTouchInputs() {
+    this.joyPointerId = null;
+    this.attackPointerId = null;
+    if (this.joyKnob && this.joyCenter) this.joyKnob.setPosition(this.joyCenter.x, this.joyCenter.y);
+    if (this.touchAttackBg) this.touchAttackBg.setFillStyle(0x260c0c, 0.78).setStrokeStyle(3, 0xd04040, 0.9);
+    this.game_?.player?.clearJoystick?.();
+  }
+
+  updateTouchVisibility() {
+    if (this.touchControls) {
+      this.touchControls.setVisible(!!state.touchMode && !this.activeModal);
+    }
+    if (!state.touchMode) this.resetTouchInputs();
+  }
+
+  isPointerOverHud(p) {
+    if (this.activeModal) return true;
+    if (p.y >= H - 92) return true;
+    if (!state.touchMode) return false;
+    if (p.x >= 8 && p.x <= 276 && p.y >= 376 && p.y < H - 92) return true;
+    const tb = this.touchBtnPos;
+    if (!tb) return false;
+    if (Math.hypot(p.x - tb.attack.x, p.y - tb.attack.y) <= 62) return true;
+    if (Math.hypot(p.x - tb.dodge.x, p.y - tb.dodge.y) <= 46) return true;
+    if (Math.hypot(p.x - tb.interact.x, p.y - tb.interact.y) <= 48) return true;
+    return false;
+  }
+
+  mkCloseBtn(c, x, y, cb, borderCol = 0x905828) {
+    const bg = this.add.rectangle(x, y, 30, 30, 0x26140e, 0.96).setStrokeStyle(1.5, borderCol).setInteractive({ useHandCursor: true });
+    const t = this.add.text(x, y, 'X', {
+      fontFamily: 'Arial, sans-serif', fontSize: '17px', fontStyle: 'bold', color: '#ffe0b0',
+    }).setOrigin(0.5);
+    bg.on('pointerover', () => { bg.setFillStyle(0x4a2016, 1); bg.setStrokeStyle(2, 0xffe080); t.setColor('#ffffff'); });
+    bg.on('pointerout', () => { bg.setFillStyle(0x26140e, 0.96); bg.setStrokeStyle(1.5, borderCol); t.setColor('#ffe0b0'); });
+    bg.on('pointerdown', cb);
+    c.add([bg, t]);
+    return { bg, t, x, y };
+  }
+
   // =========================================================== 角色 / 背包 / 技能書庫面板
-  slotBox(c, x, y, item, label, onClick, size = 62) {
+  slotBox(c, x, y, item, label, onClick, size = 62, selected = false) {
     const sc = size / 62;
     const half = size / 2;
-    const border = item ? QUALITY_HEX[item.quality] : 0x4a3a2a;
-    const bg = this.add.rectangle(x, y, size, size, item ? 0x1a1412 : 0x0e0a08, 1).setStrokeStyle(2, border);
+    const baseBorder = item ? QUALITY_HEX[item.quality] : 0x4a3a2a;
+    const border = selected ? 0xffe060 : baseBorder;
+    const strokeW = selected ? 3 : 2;
+    const bg = this.add.rectangle(x, y, size, size, item ? (selected ? 0x2a1f16 : 0x1a1412) : 0x0e0a08, 1)
+      .setStrokeStyle(strokeW, border);
     c.add(bg);
     if (item) {
-      c.add(this.add.image(x, y, 'glow').setTint(border).setAlpha(0.18).setScale(0.45 * sc));
+      c.add(this.add.image(x, y, 'glow').setTint(baseBorder).setAlpha(selected ? 0.34 : 0.18).setScale(0.45 * sc));
       const texKey = item.kind === 'book' ? 'icon_book' : 'icon_' + item.slot;
       c.add(this.add.image(x, y, texKey).setScale(0.92 * sc));
       if (item.enhance) {
@@ -332,16 +584,70 @@ export default class UIScene extends Phaser.Scene {
       c.add(txt(this, x, y, label, size < 60 ? 12 : 13, '#5a4a3a').setOrigin(0.5));
     }
     bg.setInteractive({ useHandCursor: !!item });
-    bg.on('pointerover', () => { bg.setStrokeStyle(3, 0xffe0a0); if (item) this.showTooltip(item, x, y); });
-    bg.on('pointerout', () => { bg.setStrokeStyle(2, border); this.tooltip.setVisible(false); });
+    bg.on('pointerover', () => {
+      bg.setStrokeStyle(3, 0xffe0a0);
+      if (item && (!state.touchMode || (this.selectedBagIdx === null && !this.selectedEquipSlot))) {
+        this.showTooltip(item, x, y);
+      }
+    });
+    bg.on('pointerout', () => {
+      bg.setStrokeStyle(strokeW, border);
+      if (!state.touchMode || (this.selectedBagIdx === null && !this.selectedEquipSlot)) {
+        this.tooltip.setVisible(false);
+      }
+    });
     bg.on('pointerdown', (p) => onClick(p));
     return bg;
+  }
+
+  sellBagItem(i) {
+    const item = state.inventory[i];
+    if (!item) return;
+    const retRunes = item.kind === 'equip' ? unsocketRunes(item) : 0;
+    const v = itemValue(item);
+    state.gold += v;
+    state.inventory.splice(i, 1);
+    if (this.selectedBagIdx === i) this.selectedBagIdx = null;
+    else if (this.selectedBagIdx !== null && this.selectedBagIdx > i) this.selectedBagIdx--;
+    Sfx.play('coin');
+    const runeNote = retRunes > 0 ? `（已退回 ${retRunes} 符文）` : '';
+    this.game_.msg(`賣出 ${itemDisplayName(item)}，獲得 ${v} 金幣${runeNote}`, '#f0c040');
+    saveGame();
+  }
+
+  useOrEquipBagItem(i) {
+    const item = state.inventory[i];
+    if (!item) return;
+    this.selectedBagIdx = null;
+    if (this.panelTab === 'runes' && item.kind === 'equip') {
+      this.runeTargetId = item.id;
+      Sfx.play('click');
+      return;
+    }
+    if (item.kind === 'book') {
+      const res = useSkillBook(i);
+      const def = SKILL_DEFS[res.skillId];
+      if (res.ok) {
+        Sfx.play('book');
+        this.game_.msg(res.learned ? `習得新技能：【${def.name}】！` : `【${def.name}】提升至 Lv.${res.level}！`, '#60ffb8');
+        saveGame();
+      } else {
+        Sfx.play('denied');
+        this.game_.msg(`【${def.name}】已達最高等級 Lv.${MAX_SKILL_LV}`, '#ff8080');
+      }
+    } else {
+      equip(i);
+      Sfx.play('equip');
+      saveGame();
+    }
   }
 
   refreshPanel() {
     const c = this.modal;
     c.removeAll(true);
     this.tooltip.setVisible(false);
+    this.touchItemPrimaryBtn = null;
+    this.touchItemSellBtn = null;
     const X = 140, Y = 80, PW = 1000, PH = 550;
     c.add(this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.58).setInteractive());
     const g = this.add.graphics();
@@ -356,7 +662,13 @@ export default class UIScene extends Phaser.Scene {
       const b = this.add.rectangle(tx, Y + 30, 122, 34, act ? 0x3a2012 : 0x18100c)
         .setStrokeStyle(2, act ? 0xd09040 : 0x4a3420).setInteractive({ useHandCursor: true });
       const t = txt(this, tx, Y + 30, label, 15, act ? '#ffe0a0' : '#a08870').setOrigin(0.5);
-      b.on('pointerdown', () => { Sfx.play('click'); this.panelTab = tabId; this.refreshPanel(); });
+      b.on('pointerdown', () => {
+        Sfx.play('click');
+        this.panelTab = tabId;
+        this.selectedBagIdx = null;
+        this.selectedEquipSlot = null;
+        this.refreshPanel();
+      });
       c.add([b, t]);
       return { x: tx, y: Y + 30 };
     };
@@ -364,14 +676,28 @@ export default class UIScene extends Phaser.Scene {
     this.tabPosSkills = mkTab(X + 206, '技能書庫', 'skills');
     this.tabPosRunes = mkTab(X + 336, '符文鑲嵌', 'runes');
 
-    c.add(txt(this, X + 705, Y + 28, `背包（${state.inventory.length} / ${INV_SIZE}）`, 22, '#e0b070').setOrigin(0.5));
-    const close = txt(this, X + PW - 24, Y + 14, '✕', 24, '#c08060').setOrigin(0.5, 0).setInteractive({ useHandCursor: true });
-    close.on('pointerdown', () => this.setModal(null));
-    c.add(close);
+    c.add(txt(this, X + 605, Y + 28, `背包（${state.inventory.length} / ${INV_SIZE}）`, 22, '#e0b070').setOrigin(0.5));
+    this.bagSellBtn = this.mkModalBtn(c, X + 868, Y + 28, 136, 30,
+      this.bagSellMode ? '賣出模式：開' : '賣出模式：關',
+      this.bagSellMode ? 0x4a1e16 : 0x1c1412,
+      this.bagSellMode ? 0xe86040 : 0x5a4434,
+      () => {
+        this.bagSellMode = !this.bagSellMode;
+        this.selectedBagIdx = null;
+        this.selectedEquipSlot = null;
+        Sfx.play('click');
+        this.refreshPanel();
+      });
+
+    this.panelCloseBtn = this.mkCloseBtn(c, X + PW - 26, Y + 28, () => this.setModal(null));
 
     if (this.panelTab === 'char') this.renderCharTab(c, X, Y);
     else if (this.panelTab === 'skills') this.renderSkillsTab(c, X, Y);
     else this.renderRunesTab(c, X, Y);
+
+    // 確保選取索引仍然有效
+    if (this.selectedBagIdx !== null && !state.inventory[this.selectedBagIdx]) this.selectedBagIdx = null;
+    if (this.selectedEquipSlot && !state.equipment[this.selectedEquipSlot]) this.selectedEquipSlot = null;
 
     // 背包格 (6 x 4 = 24 格)
     this.invPositions = [];
@@ -380,45 +706,96 @@ export default class UIScene extends Phaser.Scene {
       const ix = X + 488 + col * 84, iy = Y + 114 + row * 94;
       this.invPositions.push({ x: ix, y: iy });
       const item = state.inventory[i];
+      const isSel = !!item && this.selectedBagIdx === i;
       this.slotBox(c, ix, iy, item, null, (p) => {
-        if (!item) return;
-        if (p.rightButtonDown()) {
-          const retRunes = item.kind === 'equip' ? unsocketRunes(item) : 0;
-          const v = itemValue(item);
-          state.gold += v;
-          state.inventory.splice(i, 1);
-          Sfx.play('coin');
-          const runeNote = retRunes > 0 ? `（已退回 ${retRunes} 符文）` : '';
-          this.game_.msg(`賣出 ${itemDisplayName(item)}，獲得 ${v} 金幣${runeNote}`, '#f0c040');
-          saveGame();
-        } else if (this.panelTab === 'runes' && item.kind === 'equip') {
-          this.runeTargetId = item.id;
-          Sfx.play('click');
+        if (!item) {
+          if (this.selectedBagIdx !== null || this.selectedEquipSlot) {
+            this.selectedBagIdx = null;
+            this.selectedEquipSlot = null;
+            this.refreshPanel();
+          }
+          return;
+        }
+        if ((p && p.rightButtonDown && p.rightButtonDown()) || this.bagSellMode) {
+          this.sellBagItem(i);
           this.refreshPanel();
           return;
-        } else if (item.kind === 'book') {
-          const res = useSkillBook(i);
-          const def = SKILL_DEFS[res.skillId];
-          if (res.ok) {
-            Sfx.play('book');
-            this.game_.msg(res.learned ? `習得新技能：【${def.name}】！` : `【${def.name}】提升至 Lv.${res.level}！`, '#60ffb8');
-            saveGame();
-          } else {
-            Sfx.play('denied');
-            this.game_.msg(`【${def.name}】已達最高等級 Lv.${MAX_SKILL_LV}`, '#ff8080');
-          }
-        } else {
-          equip(i);
-          Sfx.play('equip');
-          saveGame();
         }
+        if (state.touchMode) {
+          if (this.selectedBagIdx === i) {
+            this.useOrEquipBagItem(i);
+          } else {
+            this.selectedBagIdx = i;
+            this.selectedEquipSlot = null;
+            Sfx.play('click');
+          }
+          this.refreshPanel();
+          return;
+        }
+        this.useOrEquipBagItem(i);
+        this.refreshPanel();
+      }, 62, isSel);
+    }
+
+    // 觸控物品操作列 + 預覽（不擋最後一列背包格與底線提示）
+    let selItem = null, selX = 0, selY = 0;
+    if (state.touchMode && this.selectedBagIdx !== null && state.inventory[this.selectedBagIdx]) {
+      selItem = state.inventory[this.selectedBagIdx];
+      const pos = this.invPositions[this.selectedBagIdx];
+      selX = pos.x; selY = pos.y;
+    } else if (state.touchMode && this.selectedEquipSlot && state.equipment[this.selectedEquipSlot]) {
+      selItem = state.equipment[this.selectedEquipSlot];
+      const pos = this.slotPositions && this.slotPositions[this.selectedEquipSlot];
+      if (pos) { selX = pos.x; selY = pos.y; }
+    }
+
+    if (selItem) {
+      const barY = Y + 474;
+      c.add(this.add.rectangle(X + 706, barY, 548, 52, 0x1a120e, 0.96).setStrokeStyle(1.5, QUALITY_HEX[selItem.quality]));
+      const nameTxt = txt(this, X + 444, barY, itemDisplayName(selItem), 15, QUALITY_COLORS[selItem.quality]).setOrigin(0, 0.5);
+      if (nameTxt.width > 180) nameTxt.setScale(180 / nameTxt.width);
+      c.add(nameTxt);
+
+      if (this.selectedEquipSlot) {
+        const slot = this.selectedEquipSlot;
+        this.touchItemPrimaryBtn = this.mkModalBtn(c, X + 806, barY, 120, 36, '卸下裝備', 0x263848, 0x70b8ff, () => {
+          this.selectedEquipSlot = null;
+          if (unequip(slot)) { Sfx.play('equip'); saveGame(); }
+          else { Sfx.play('denied'); this.game_.msg('背包已滿', '#ff8080'); }
+          this.refreshPanel();
+        });
+      } else {
+        const idx = this.selectedBagIdx;
+        const primaryLabel = (this.panelTab === 'runes' && selItem.kind === 'equip')
+          ? '設為鑲嵌目標'
+          : selItem.kind === 'book' ? '閱讀技能書' : '穿上裝備';
+        this.touchItemPrimaryBtn = this.mkModalBtn(c, X + 710, barY, 124, 36, primaryLabel, 0x22421e, 0x70d860, () => {
+          this.useOrEquipBagItem(idx);
+          this.refreshPanel();
+        });
+        this.touchItemSellBtn = this.mkModalBtn(c, X + 842, barY, 120, 36, `賣出 +${itemValue(selItem)}金`, 0x461c1c, 0xe06050, () => {
+          this.sellBagItem(idx);
+          this.refreshPanel();
+        });
+      }
+      this.mkModalBtn(c, X + 940, barY, 60, 36, '取消', 0x1a1412, 0x6a5a4a, () => {
+        this.selectedBagIdx = null;
+        this.selectedEquipSlot = null;
+        Sfx.play('click');
         this.refreshPanel();
       });
+
+      this.showTooltip(selItem, selX, selY, Y + 440);
     }
-    const hint = this.panelTab === 'runes'
-      ? '左鍵背包裝備：選為鑲嵌目標　｜　右鍵物品：賣出換金幣　｜　B / ESC：關閉'
-      : '左鍵：穿卸裝備 / 閱讀技能書　｜　右鍵背包物品：賣出換金幣　｜　B / ESC：關閉';
-    c.add(txt(this, X + PW / 2, Y + PH - 24, hint, 14, '#8a7a6a').setOrigin(0.5));
+
+    const hint = this.bagSellMode
+      ? '【賣出模式已開啟】點擊任意背包物品即可直接賣出換金幣（再次點擊右上切換鈕可關閉）'
+      : state.touchMode
+        ? '點擊物品預覽並操作（再點一次立即裝備/閱讀）｜右上可切換「賣出模式」'
+        : this.panelTab === 'runes'
+          ? '左鍵背包裝備：選為鑲嵌目標　｜　右鍵物品：賣出換金幣　｜　B / ESC：關閉'
+          : '左鍵：穿卸裝備 / 閱讀技能書　｜　右鍵背包物品：賣出換金幣　｜　B / ESC：關閉';
+    c.add(txt(this, X + PW / 2, Y + PH - 22, hint, 13, this.bagSellMode ? '#ff9878' : '#8a7a6a').setOrigin(0.5));
   }
 
   renderCharTab(c, X, Y) {
@@ -429,11 +806,25 @@ export default class UIScene extends Phaser.Scene {
       const sy = Y + 82 + row * 76;
       this.slotPositions[slot] = { x: sx, y: sy };
       const item = state.equipment[slot];
+      const isSel = !!item && this.selectedEquipSlot === slot;
       this.slotBox(c, sx, sy, item, SLOT_NAMES[slot], () => {
         if (!item) return;
+        if (state.touchMode) {
+          if (this.selectedEquipSlot === slot) {
+            this.selectedEquipSlot = null;
+            if (unequip(slot)) { Sfx.play('equip'); saveGame(); }
+            else { Sfx.play('denied'); this.game_.msg('背包已滿', '#ff8080'); }
+          } else {
+            this.selectedEquipSlot = slot;
+            this.selectedBagIdx = null;
+            Sfx.play('click');
+          }
+          this.refreshPanel();
+          return;
+        }
         if (unequip(slot)) { Sfx.play('equip'); saveGame(); this.refreshPanel(); }
         else { Sfx.play('denied'); this.game_.msg('背包已滿', '#ff8080'); }
-      }, 56);
+      }, 56, isSel);
       c.add(txt(this, sx, sy + 34, SLOT_NAMES[slot], 11, '#8a7a6a').setOrigin(0.5));
     });
 
@@ -473,7 +864,7 @@ export default class UIScene extends Phaser.Scene {
       ['掉寶/金幣', `+${Math.round(s.magicFind * 100)}/+${Math.round(s.goldFind * 100)}%`],
       ['爆擊機率', `${Math.round(s.critChance * 100)}% (${s.critDmg.toFixed(1)}x)`],
       ['最高層數', `第 ${state.maxFloor} 層`],
-      ['金 / 石', `${state.gold} / ${state.shards}`],
+      ['金 / 石 / 精', `${state.gold} / ${state.shards} / ${state.setEssence || 0}`],
     ];
     lines.forEach(([k, v], i) => {
       const col = i % 2, row = Math.floor(i / 2);
@@ -481,7 +872,11 @@ export default class UIScene extends Phaser.Scene {
       c.add(txt(this, X + 106 + col * 192, y + row * 22, `${v}`, 12, '#ffe0a0'));
     });
     const auraLabel = s.activeAuras.length ? s.activeAuras.map((a) => a.def.name).join(' · ') : '無（鑲嵌組合符文啟用）';
-    c.add(txt(this, X + 24, y + 134, `符文光環：${auraLabel}`, 12, s.activeAuras.length ? '#70f8e0' : '#6a5a4a', { wordWrap: { width: 376 } }));
+    c.add(txt(this, X + 24, y + 132, `符文光環：${auraLabel}`, 12, s.activeAuras.length ? '#70f8e0' : '#6a5a4a', { wordWrap: { width: 376 } }));
+    const setLabel = s.activeSets && s.activeSets.length
+      ? s.activeSets.map((o) => `${o.def.name}(${o.count}/4)`).join(' · ')
+      : '無（穿戴 2/4 件套裝啟用）';
+    c.add(txt(this, X + 24, y + 150, `套裝：${setLabel}`, 12, s.activeSets && s.activeSets.length ? '#38f288' : '#6a5a4a', { wordWrap: { width: 376 } }));
   }
 
   renderSkillsTab(c, X, Y) {
@@ -701,14 +1096,12 @@ export default class UIScene extends Phaser.Scene {
     g.fillStyle(0x140d0a, 0.98).fillRect(X, Y, PW, PH);
     g.lineStyle(3, 0x905020, 1).strokeRect(X, Y, PW, PH);
     g.lineStyle(1, 0x4a2a18, 1).lineBetween(X + 370, Y + 64, X + 370, Y + PH - 24);
-    g.lineStyle(1, 0x4a2a18, 1).lineBetween(X + 390, Y + 328, X + PW - 24, Y + 328);
+    g.lineStyle(1, 0x4a2a18, 1).lineBetween(X + 390, Y + 324, X + PW - 24, Y + 324);
     c.add(g);
 
     c.add(txt(this, X + 28, Y + 22, '鐵匠布朗的鍛造爐', 24, '#ffd080'));
-    c.add(txt(this, X + PW - 64, Y + 25, `金幣：${state.gold}　　餘燼石：${state.shards}`, 16, '#f0d090').setOrigin(1, 0));
-    const close = txt(this, X + PW - 24, Y + 14, '✕', 24, '#c08060').setOrigin(0.5, 0).setInteractive({ useHandCursor: true });
-    close.on('pointerdown', () => this.setModal(null));
-    c.add(close);
+    c.add(txt(this, X + PW - 64, Y + 25, `金幣：${state.gold}　餘燼石：${state.shards}　套裝精華：${state.setEssence || 0}`, 15, '#f0d090').setOrigin(1, 0));
+    this.forgeCloseBtn = this.mkCloseBtn(c, X + PW - 26, Y + 28, () => this.setModal(null));
 
     // 彙整所有裝備（先已裝備，後背包）
     const list = [];
@@ -751,7 +1144,7 @@ export default class UIScene extends Phaser.Scene {
       c.add(txt(this, X + 80, ry + 24, sub, 12, entry.equipped ? '#80ff90' : '#9a8a7a'));
     });
 
-    // 右上：強化／重鑄／打孔／拆解
+    // 右上：強化／重鑄／打孔／拆解／套裝部位轉換
     const RX = X + 400;
     const selected = list.find((o) => o.item.id === this.forgeSelectedId);
     if (!selected) {
@@ -761,36 +1154,63 @@ export default class UIScene extends Phaser.Scene {
       const enh = it.enhance || 0;
       const curStats = effectiveStats(it);
       const nextStats = enh < MAX_ENHANCE ? effectiveStats(it, enh + 1) : curStats;
-      c.add(this.add.image(RX + 34, Y + 106, 'icon_' + it.slot).setScale(1.1));
-      c.add(txt(this, RX + 76, Y + 80, itemDisplayName(it), 21, QUALITY_COLORS[it.quality]));
-      c.add(txt(this, RX + 76, Y + 108, `${QUALITY_NAMES[it.quality]}・${SLOT_NAMES[it.slot]}　物品等級 ${it.ilvl}　（強化 ${enh} / ${MAX_ENHANCE}）`, 13, '#a09080'));
+      c.add(this.add.image(RX + 34, Y + 104, 'icon_' + it.slot).setScale(1.1));
+      c.add(txt(this, RX + 76, Y + 78, itemDisplayName(it), 21, QUALITY_COLORS[it.quality]));
+      const setTag = it.setId && getSetDef(it.setId) ? `・【${getSetDef(it.setId).name}】` : '';
+      c.add(txt(this, RX + 76, Y + 106, `${QUALITY_NAMES[it.quality]}${setTag}・${SLOT_NAMES[it.slot]}　Lv.${it.ilvl}（強化 ${enh}/${MAX_ENHANCE}）`, 13, '#a09080'));
 
-      let sy = Y + 142;
+      let sy = Y + 138;
       for (const k of ['atk', 'def', 'hp', 'mp']) {
         if (!curStats[k]) continue;
         const line = enh < MAX_ENHANCE
           ? `+${curStats[k]} ${STAT_NAMES[k]}  →  +${nextStats[k]}`
           : `+${curStats[k]} ${STAT_NAMES[k]}（已滿）`;
-        c.add(txt(this, RX + 16, sy, line, 14, '#90d0ff'));
-        sy += 22;
+        c.add(txt(this, RX + 14, sy, line, 14, '#90d0ff'));
+        sy += 20;
+      }
+
+      if (it.quality === 'set' && it.setId) {
+        const cvCost = convertSetPieceCost(it);
+        const canConv = state.gold >= cvCost.gold && (state.setEssence || 0) >= cvCost.essence;
+        this.forgeBtns.convertSet = this.mkModalBtn(c, RX + 98, Y + 240, 192, 30,
+          `轉換同套部位 (${cvCost.gold}金+1精華)`,
+          canConv ? 0x163826 : 0x201816, canConv ? 0x38f288 : 0x4a3c36, () => {
+            if (!canConv) { Sfx.play('denied'); this.game_.msg('金幣或套裝精華不足', '#ff8080'); return; }
+            if (selected.equipped) {
+              Sfx.play('denied');
+              this.game_.msg('請先卸下該套裝裝備再進行部位轉換', '#ff8080');
+              return;
+            }
+            const owned = new Set();
+            for (const sl of SLOTS) if (state.equipment[sl]?.setId === it.setId) owned.add(sl);
+            for (const bi of state.inventory) if (bi?.setId === it.setId) owned.add(bi.slot);
+            state.gold -= cvCost.gold;
+            state.setEssence -= cvCost.essence;
+            convertSetPiece(it, owned);
+            Sfx.play('rare');
+            Sfx.play('forge');
+            saveGame();
+            this.game_.msg(`已轉換為【${itemDisplayName(it)}】（${SLOT_NAMES[it.slot]}）！`, '#38f288');
+            this.refreshForge();
+          });
       }
 
       // 右半欄：插孔、符文光環與特殊詞條
-      let sy2 = Y + 142;
+      let sy2 = Y + 138;
       const rw = getItemRuneword(it);
       const sockLine = `插孔：${(it.runes || []).length}/${it.sockets || 0}${rw ? ` · ✦${rw.name}` : `（上限 ${MAX_SOCKETS}）`}`;
-      c.add(txt(this, RX + 236, sy2, sockLine, 13, rw ? rw.color : '#80e8d0'));
+      c.add(txt(this, RX + 224, sy2, sockLine, 13, rw ? rw.color : '#80e8d0'));
       sy2 += 22;
       if (it.specials && it.specials.length) {
         for (const af of it.specials) {
-          c.add(txt(this, RX + 236, sy2, `★ ${formatSpecialAffix(af)}`, 13, '#ffb060'));
+          c.add(txt(this, RX + 224, sy2, `★ ${formatSpecialAffix(af)}`, 13, '#ffb060'));
           sy2 += 20;
         }
       }
 
       const eCost = enhanceCost(it);
       const canEnh = enh < MAX_ENHANCE && state.gold >= eCost;
-      this.forgeBtns.enhance = this.mkModalBtn(c, RX + 64, Y + 286, 128, 44,
+      this.forgeBtns.enhance = this.mkModalBtn(c, RX + 64, Y + 290, 128, 42,
         enh >= MAX_ENHANCE ? '強化已滿' : `強化 +${enh + 1} (${eCost}金)`,
         canEnh ? 0x26441c : 0x221a16, canEnh ? 0x80d050 : 0x55443a, () => {
           if (!canEnh) { Sfx.play('denied'); return; }
@@ -805,7 +1225,7 @@ export default class UIScene extends Phaser.Scene {
 
       const rCost = reforgeCost(it);
       const canRef = state.gold >= rCost;
-      this.forgeBtns.reforge = this.mkModalBtn(c, RX + 202, Y + 286, 128, 44,
+      this.forgeBtns.reforge = this.mkModalBtn(c, RX + 202, Y + 290, 128, 42,
         `重鑄 (${rCost}金)`,
         canRef ? 0x20324a : 0x221a16, canRef ? 0x60a0ff : 0x55443a, () => {
           if (!canRef) { Sfx.play('denied'); return; }
@@ -820,7 +1240,7 @@ export default class UIScene extends Phaser.Scene {
 
       const sCost = punchSocketCost(it);
       const canSock = (it.sockets || 0) < MAX_SOCKETS && state.gold >= sCost.gold && state.shards >= sCost.shards;
-      this.forgeBtns.socket = this.mkModalBtn(c, RX + 340, Y + 286, 128, 44,
+      this.forgeBtns.socket = this.mkModalBtn(c, RX + 340, Y + 290, 128, 42,
         (it.sockets || 0) >= MAX_SOCKETS ? '插孔已滿' : `打孔 (${sCost.gold}金+${sCost.shards}石)`,
         canSock ? 0x32204a : 0x221a16, canSock ? 0xb870ff : 0x55443a, () => {
           if (!canSock) { Sfx.play('denied'); return; }
@@ -835,75 +1255,148 @@ export default class UIScene extends Phaser.Scene {
 
       const rew = dismantleReward(it);
       const canDis = !selected.equipped;
-      this.forgeBtns.dismantle = this.mkModalBtn(c, RX + 478, Y + 286, 128, 44,
-        selected.equipped ? '裝備中' : `拆解 (+${rew.shards}石/${rew.gold}金)`,
+      const disLabel = selected.equipped
+        ? '裝備中'
+        : rew.essence > 0 ? `拆解 (+${rew.essence}精/${rew.shards}石)` : `拆解 (+${rew.shards}石/${rew.gold}金)`;
+      this.forgeBtns.dismantle = this.mkModalBtn(c, RX + 478, Y + 290, 128, 42,
+        disLabel,
         canDis ? 0x461c1c : 0x201818, canDis ? 0xd05050 : 0x4a3a3a, () => {
           if (!canDis) { Sfx.play('denied'); return; }
           const retRunes = unsocketRunes(it);
           state.gold += rew.gold;
           state.shards += rew.shards;
+          state.setEssence = (state.setEssence || 0) + (rew.essence || 0);
           state.inventory.splice(selected.invIndex, 1);
           Sfx.play('forge');
           saveGame();
+          const eNote = rew.essence > 0 ? `、${rew.essence} 套裝精華` : '';
           const rNote = retRunes > 0 ? `（退回 ${retRunes} 顆符文）` : '';
-          this.game_.msg(`拆解獲得 ${rew.gold} 金幣、${rew.shards} 餘燼石${rNote}`, '#ff98ff');
+          this.game_.msg(`拆解獲得 ${rew.gold} 金幣、${rew.shards} 餘燼石${eNote}${rNote}`, rew.essence > 0 ? '#38f288' : '#ff98ff');
           this.forgeSelectedId = null;
           this.refreshForge();
         });
     }
 
-    // 右下：鍛造新裝備（2x4 部位）
+    // 右下：打造新裝備（一般神鑄 / 套裝定向保底 雙分頁）
     const ilvl = Math.max(1, state.maxFloor * 2 - 1);
-    c.add(txt(this, RX + 10, Y + 340, `鍛造新裝備（依已解鎖層數產出 Lv.${ilvl} 裝備）`, 15, '#ffd080'));
-    SLOTS.forEach((slot, i) => {
-      const col = i % 4, row = Math.floor(i / 4);
-      const bx = RX + 65 + col * 116, by = Y + 382 + row * 36;
-      const act = this.forgeSlot === slot;
-      this.mkModalBtn(c, bx, by, 104, 30, SLOT_NAMES[slot],
-        act ? 0x442a14 : 0x1a120e, act ? 0xffb840 : 0x5a402a, () => {
-          this.forgeSlot = slot;
-          Sfx.play('click');
+    c.add(txt(this, RX + 8, Y + 344, `打造 Lv.${ilvl}：`, 14, '#ffd080').setOrigin(0, 0.5));
+    this.forgeBtns.modeCraft = this.mkModalBtn(c, RX + 178, Y + 344, 146, 28, '一般 / 神鑄鍛造',
+      this.forgeMode === 'craft' ? 0x442a14 : 0x1a120e, this.forgeMode === 'craft' ? 0xffb840 : 0x5a402a, () => {
+        this.forgeMode = 'craft';
+        Sfx.play('click');
+        this.refreshForge();
+      });
+    this.forgeBtns.modeSet = this.mkModalBtn(c, RX + 342, Y + 344, 152, 28, '套裝定向保底',
+      this.forgeMode === 'set' ? 0x183c28 : 0x1a120e, this.forgeMode === 'set' ? 0x38f288 : 0x5a402a, () => {
+        this.forgeMode = 'set';
+        Sfx.play('click');
+        this.refreshForge();
+      });
+
+    const bagFull = state.inventory.length >= INV_SIZE;
+    if (this.forgeMode === 'set') {
+      const sDef = getSetDef(this.forgeSetId) || SET_LIST[0];
+      this.forgeSetId = sDef.id;
+      if (!sDef.slots.includes(this.forgeSetSlot)) this.forgeSetSlot = sDef.slots[0];
+
+      this.forgeSetBtns = {};
+      SET_LIST.forEach((def, idx) => {
+        const bx = RX + 70 + idx * 138, by = Y + 388;
+        const act = def.id === sDef.id;
+        this.forgeSetBtns[def.id] = this.mkModalBtn(c, bx, by, 128, 32, def.name,
+          act ? 0x183c28 : 0x1a120e, act ? 0x38f288 : 0x4a3a2c, () => {
+            this.forgeSetId = def.id;
+            if (!def.slots.includes(this.forgeSetSlot)) this.forgeSetSlot = def.slots[0];
+            Sfx.play('click');
+            this.refreshForge();
+          });
+      });
+
+      const owned = new Set();
+      for (const sl of SLOTS) if (state.equipment[sl]?.setId === sDef.id) owned.add(sl);
+      for (const bi of state.inventory) if (bi?.setId === sDef.id) owned.add(bi.slot);
+
+      this.forgeSetSlotBtns = {};
+      sDef.slots.forEach((slot, idx) => {
+        const bx = RX + 70 + idx * 138, by = Y + 430;
+        const act = this.forgeSetSlot === slot;
+        const has = owned.has(slot);
+        this.forgeSetSlotBtns[slot] = this.mkModalBtn(c, bx, by, 128, 32, `${SLOT_NAMES[slot]} [${has ? '有' : '缺'}]`,
+          act ? 0x2a4822 : 0x18120e, act ? 0xffe060 : (has ? 0x38a060 : 0x5a402a), () => {
+            this.forgeSetSlot = slot;
+            Sfx.play('click');
+            this.refreshForge();
+          });
+      });
+
+      const cCost = craftSetCost(ilvl + 1);
+      const canSet = !bagFull && state.gold >= cCost.gold && state.shards >= cCost.shards && (state.setEssence || 0) >= cCost.essence;
+      this.forgeBtns.craftSet = this.mkModalBtn(c, RX + 276, Y + 486, 380, 44,
+        bagFull ? '背包已滿' : `定向鍛造【${sDef.name}·${SLOT_NAMES[this.forgeSetSlot]}】(${cCost.gold}金+${cCost.shards}石+${cCost.essence}精華)`,
+        canSet ? 0x164428 : 0x201816, canSet ? 0x38f288 : 0x50403a, () => {
+          if (!canSet) { Sfx.play('denied'); this.game_.msg('金幣、餘燼石或套裝精華不足', '#ff8080'); return; }
+          state.gold -= cCost.gold;
+          state.shards -= cCost.shards;
+          state.setEssence -= cCost.essence;
+          const item = generateSetItem(sDef.id, ilvl + 1, this.forgeSetSlot);
+          state.inventory.push(item);
+          this.forgeSelectedId = item.id;
+          Sfx.play('rare');
+          Sfx.play('forge');
+          saveGame();
+          this.game_.msg(`保底鍛造出套裝：${item.name}！`, '#38f288');
           this.refreshForge();
         });
-    });
-
-    const nCost = forgeCost('normal', ilvl);
-    const lCost = forgeCost('legendary', ilvl);
-    const bagFull = state.inventory.length >= INV_SIZE;
-    const canNorm = !bagFull && state.gold >= nCost.gold;
-    const canLeg = !bagFull && state.gold >= lCost.gold && state.shards >= lCost.shards;
-
-    this.forgeBtns.craftNormal = this.mkModalBtn(c, RX + 140, Y + 482, 260, 46,
-      bagFull ? '背包已滿' : `精工鍛造 (${nCost.gold}金 · 藍/金裝)`,
-      canNorm ? 0x1c324a : 0x201816, canNorm ? 0x6aa8ff : 0x50403a, () => {
-        if (!canNorm) { Sfx.play('denied'); return; }
-        state.gold -= nCost.gold;
-        const qual = Math.random() < 0.28 ? 'gold' : 'blue';
-        const item = generateItem(ilvl, 0.25, qual, this.forgeSlot);
-        state.inventory.push(item);
-        this.forgeSelectedId = item.id;
-        Sfx.play('forge');
-        saveGame();
-        this.game_.msg(`鍛造出：${item.name}！`, QUALITY_COLORS[item.quality]);
-        this.refreshForge();
+    } else {
+      SLOTS.forEach((slot, i) => {
+        const col = i % 4, row = Math.floor(i / 4);
+        const bx = RX + 65 + col * 116, by = Y + 388 + row * 36;
+        const act = this.forgeSlot === slot;
+        this.mkModalBtn(c, bx, by, 104, 30, SLOT_NAMES[slot],
+          act ? 0x442a14 : 0x1a120e, act ? 0xffb840 : 0x5a402a, () => {
+            this.forgeSlot = slot;
+            Sfx.play('click');
+            this.refreshForge();
+          });
       });
 
-    this.forgeBtns.craftLegend = this.mkModalBtn(c, RX + 425, Y + 482, 270, 46,
-      bagFull ? '背包已滿' : `餘燼神鑄 (${lCost.gold}金+${lCost.shards}石 · 必金/特殊)`,
-      canLeg ? 0x4a2a0e : 0x201816, canLeg ? 0xf0c040 : 0x50403a, () => {
-        if (!canLeg) { Sfx.play('denied'); return; }
-        state.gold -= lCost.gold;
-        state.shards -= lCost.shards;
-        const qual = Math.random() < 0.25 ? 'special' : 'gold';
-        const item = generateItem(ilvl + 1, 0.4, qual, this.forgeSlot);
-        state.inventory.push(item);
-        this.forgeSelectedId = item.id;
-        Sfx.play('rare');
-        Sfx.play('forge');
-        saveGame();
-        this.game_.msg(`${qual === 'special' ? '神鑄特殊傳世' : '神鑄傳奇'}：${item.name}！`, QUALITY_COLORS[qual]);
-        this.refreshForge();
-      });
+      const nCost = forgeCost('normal', ilvl);
+      const lCost = forgeCost('legendary', ilvl);
+      const canNorm = !bagFull && state.gold >= nCost.gold;
+      const canLeg = !bagFull && state.gold >= lCost.gold && state.shards >= lCost.shards;
+
+      this.forgeBtns.craftNormal = this.mkModalBtn(c, RX + 140, Y + 486, 260, 46,
+        bagFull ? '背包已滿' : `精工鍛造 (${nCost.gold}金 · 藍/金裝)`,
+        canNorm ? 0x1c324a : 0x201816, canNorm ? 0x6aa8ff : 0x50403a, () => {
+          if (!canNorm) { Sfx.play('denied'); return; }
+          state.gold -= nCost.gold;
+          const qual = Math.random() < 0.28 ? 'gold' : 'blue';
+          const item = generateItem(ilvl, 0.25, qual, this.forgeSlot);
+          state.inventory.push(item);
+          this.forgeSelectedId = item.id;
+          Sfx.play('forge');
+          saveGame();
+          this.game_.msg(`鍛造出：${item.name}！`, QUALITY_COLORS[item.quality]);
+          this.refreshForge();
+        });
+
+      this.forgeBtns.craftLegend = this.mkModalBtn(c, RX + 425, Y + 486, 270, 46,
+        bagFull ? '背包已滿' : `餘燼神鑄 (${lCost.gold}金+${lCost.shards}石 · 必金/特殊)`,
+        canLeg ? 0x4a2a0e : 0x201816, canLeg ? 0xf0c040 : 0x50403a, () => {
+          if (!canLeg) { Sfx.play('denied'); return; }
+          state.gold -= lCost.gold;
+          state.shards -= lCost.shards;
+          const qual = Math.random() < 0.25 ? 'special' : 'gold';
+          const item = generateItem(ilvl + 1, 0.4, qual, this.forgeSlot);
+          state.inventory.push(item);
+          this.forgeSelectedId = item.id;
+          Sfx.play('rare');
+          Sfx.play('forge');
+          saveGame();
+          this.game_.msg(`${qual === 'special' ? '神鑄特殊傳世' : '神鑄傳奇'}：${item.name}！`, QUALITY_COLORS[qual]);
+          this.refreshForge();
+        });
+    }
   }
 
   // =========================================================== 深淵傳送門面板
@@ -911,7 +1404,7 @@ export default class UIScene extends Phaser.Scene {
     const c = this.modal;
     c.removeAll(true);
     this.tooltip.setVisible(false);
-    const X = 320, Y = 140, PW = 640, PH = 440;
+    const X = 300, Y = 84, PW = 680, PH = 552;
     c.add(this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.65).setInteractive());
     const g = this.add.graphics();
     g.fillStyle(0x100814, 0.98).fillRect(X, Y, PW, PH);
@@ -922,19 +1415,18 @@ export default class UIScene extends Phaser.Scene {
     const f = this.portalFloor;
     const biome = getBiome(f);
     const bossDef = BOSS_TYPES[biome.bossType];
+    const diff = getDifficulty(state.difficulty);
 
     c.add(txt(this, W / 2, Y + 32, '深淵傳送門 — 無盡地城', 26, '#e0b0ff').setOrigin(0.5));
-    c.add(txt(this, W / 2, Y + 66, `已解鎖最高層數：第 ${state.maxFloor} 層　｜　已通關層數：${state.clearedFloors}`, 14, '#a090b0').setOrigin(0.5));
-    const close = txt(this, X + PW - 24, Y + 14, '✕', 24, '#c080c0').setOrigin(0.5, 0).setInteractive({ useHandCursor: true });
-    close.on('pointerdown', () => this.setModal(null));
-    c.add(close);
+    c.add(txt(this, W / 2, Y + 64, `已解鎖最高層數：第 ${state.maxFloor} 層　｜　已通關層數：${state.clearedFloors}`, 14, '#a090b0').setOrigin(0.5));
+    this.portalCloseBtn = this.mkCloseBtn(c, X + PW - 26, Y + 28, () => this.setModal(null), 0x8040b0);
 
     // 層數切換
-    this.mkModalBtn(c, W / 2 - 150, Y + 135, 52, 46, '◀', f > 1 ? 0x2a1838 : 0x18121c, f > 1 ? 0xb060ff : 0x44364a, () => {
+    this.mkModalBtn(c, W / 2 - 150, Y + 114, 52, 44, '◀', f > 1 ? 0x2a1838 : 0x18121c, f > 1 ? 0xb060ff : 0x44364a, () => {
       if (f > 1) { this.portalFloor = f - 1; Sfx.play('click'); this.refreshPortal(); }
     });
-    c.add(txt(this, W / 2, Y + 135, `第 ${f} 層`, 36, '#ffd880').setOrigin(0.5));
-    this.mkModalBtn(c, W / 2 + 150, Y + 135, 52, 46, '▶', f < state.maxFloor ? 0x2a1838 : 0x18121c, f < state.maxFloor ? 0xb060ff : 0x44364a, () => {
+    c.add(txt(this, W / 2, Y + 114, `第 ${f} 層`, 34, '#ffd880').setOrigin(0.5));
+    this.mkModalBtn(c, W / 2 + 150, Y + 114, 52, 44, '▶', f < state.maxFloor ? 0x2a1838 : 0x18121c, f < state.maxFloor ? 0xb060ff : 0x44364a, () => {
       if (f < state.maxFloor) { this.portalFloor = f + 1; Sfx.play('click'); this.refreshPortal(); }
     });
 
@@ -945,7 +1437,7 @@ export default class UIScene extends Phaser.Scene {
     quickFloors.forEach((qf, i) => {
       const bx = W / 2 - ((quickFloors.length - 1) * 95) / 2 + i * 95;
       const act = qf === f;
-      this.mkModalBtn(c, bx, Y + 196, 86, 32, qf > 4 ? `最高 ${qf}層` : `第 ${qf} 層`,
+      this.mkModalBtn(c, bx, Y + 168, 86, 32, qf > 4 ? `最高 ${qf}層` : `第 ${qf} 層`,
         act ? 0x4a2068 : 0x1a1220, act ? 0xe080ff : 0x583870, () => {
           this.portalFloor = qf;
           Sfx.play('click');
@@ -953,17 +1445,38 @@ export default class UIScene extends Phaser.Scene {
         });
     });
 
-    const box = this.add.rectangle(W / 2, Y + 286, 520, 100, 0x180e20, 0.9).setStrokeStyle(1, 0x5a3078);
-    c.add(box);
-    c.add(txt(this, W / 2, Y + 258, `地貌區域：${biome.name}${f >= 5 ? '（無盡深淵強化）' : ''}`, 18, '#d8c0ff').setOrigin(0.5));
-    c.add(txt(this, W / 2, Y + 288, `鎮守頭目：${bossDef.name}`, 16, '#ff9888').setOrigin(0.5));
-    c.add(txt(this, W / 2, Y + 314, '每次進入皆會生成全新隨機地圖與地形配置', 13, '#9888a8').setOrigin(0.5));
+    // 挑戰難度選擇
+    c.add(txt(this, W / 2, Y + 210, '挑戰難度選擇', 15, '#e8d0a8').setOrigin(0.5));
+    this.portalDiffBtns = {};
+    const dStartX = W / 2 - ((DIFFICULTY_LIST.length - 1) * 148) / 2;
+    DIFFICULTY_LIST.forEach((d, idx) => {
+      const bx = dStartX + idx * 148;
+      const act = d.id === diff.id;
+      const btn = this.mkModalBtn(c, bx, Y + 246, 136, 38, d.name,
+        act ? 0x2c1a24 : 0x16101a, act ? d.hex : 0x4a3858, () => {
+          setDifficulty(d.id);
+          saveGame();
+          Sfx.play('click');
+          this.refreshPortal();
+        });
+      btn.t.setColor(act ? d.color : '#a090a8');
+      this.portalDiffBtns[d.id] = { x: btn.x, y: btn.y };
+    });
+    c.add(txt(this, W / 2, Y + 282, `【${diff.name}】${diff.short}`, 13, diff.color).setOrigin(0.5));
 
-    this.portalEnterBtn = this.mkModalBtn(c, W / 2, Y + 382, 240, 52, `踏入第 ${f} 層`, 0x4a1c68, 0xd070ff, () => {
+    const estBossHp = Math.max(1, Math.round(bossDef.hp * Math.pow(1.42, f - 1) * diff.hpMul));
+    const box = this.add.rectangle(W / 2, Y + 368, 580, 112, 0x180e20, 0.9).setStrokeStyle(1, 0x5a3078);
+    c.add(box);
+    c.add(txt(this, W / 2, Y + 332, `地貌區域：${biome.name}${f >= 5 ? '（無盡深淵強化）' : ''}`, 18, '#d8c0ff').setOrigin(0.5));
+    c.add(txt(this, W / 2, Y + 362, `鎮守頭目：${bossDef.name}（預估生命 ${estBossHp}）`, 16, '#ff9888').setOrigin(0.5));
+    c.add(txt(this, W / 2, Y + 392, `難度說明：${diff.desc}`, 13, '#b8a8c8').setOrigin(0.5));
+
+    this.portalEnterBtn = this.mkModalBtn(c, W / 2, Y + 492, 280, 52, `踏入第 ${f} 層【${diff.name}】`, 0x4a1c68, 0xd070ff, () => {
       const targetFloor = this.portalFloor;
       this.modal.removeAll(true).setVisible(false);
       this.activeModal = null;
       this.scene.resume('Game');
+      this.updateTouchVisibility();
       this.game_.enterFloor(targetFloor);
     });
   }
@@ -979,7 +1492,7 @@ export default class UIScene extends Phaser.Scene {
     return { bg, t, x, y };
   }
 
-  showTooltip(item, x, y) {
+  showTooltip(item, x, y, maxBottom = H - 8) {
     const t = this.tooltip;
     t.removeAll(true);
     const lines = [];
@@ -1020,16 +1533,29 @@ export default class UIScene extends Phaser.Scene {
       } else if (eq === item) {
         lines.push(['（裝備中）', '#80ff80', 13]);
       }
+      if (item.setId) {
+        const sDef = getSetDef(item.setId);
+        if (sDef) {
+          const eqCount = sDef.slots.filter((sl) => state.equipment[sl]?.setId === sDef.id).length;
+          lines.push([`✦ 套裝：《${sDef.name}》（${eqCount} / 4）`, '#38f288', 14]);
+          for (const sl of sDef.slots) {
+            const has = state.equipment[sl]?.setId === sDef.id;
+            lines.push([`  ${has ? '●' : '○'} ${sDef.pieces[sl]}（${SLOT_NAMES[sl]}）${has ? ' [已穿]' : ''}`, has ? '#80ff98' : '#7a7068', 12]);
+          }
+          lines.push([`(2件) ${sDef.bonus2Desc}`, eqCount >= 2 ? '#ffe070' : '#7a7068', 12, { wordWrap: { width: 340, useAdvancedWrap: true } }]);
+          lines.push([`(4件) ${sDef.bonus4Desc}`, eqCount >= 4 ? '#38f288' : '#7a7068', 12, { wordWrap: { width: 340, useAdvancedWrap: true } }]);
+        }
+      }
       lines.push([`售價：${itemValue(item)} 金幣`, '#c0a040', 12]);
     }
 
     let yy = 10;
-    const objs = lines.map(([s, col, size]) => {
-      const o = txt(this, 12, yy, s, size, col);
-      yy += size + 7;
+    const objs = lines.map(([s, col, size, extra]) => {
+      const o = txt(this, 12, yy, s, size, col, extra || {});
+      yy += o.height + 5;
       return o;
     });
-    const w = Math.max(...objs.map((o) => o.width)) + 24;
+    const w = Math.min(440, Math.max(...objs.map((o) => o.width)) + 24);
     const h = yy + 6;
     const bg = this.add.rectangle(0, 0, w, h, 0x080606, 0.96).setOrigin(0).setStrokeStyle(2, QUALITY_HEX[item.quality]);
     t.add(bg);
@@ -1037,7 +1563,7 @@ export default class UIScene extends Phaser.Scene {
     let tx = x + 40, ty = y - 20;
     if (tx + w > W - 8) tx = x - 40 - w;
     tx = Math.max(8, Math.min(W - w - 8, tx));
-    ty = Math.max(8, Math.min(H - h - 8, ty));
+    ty = Math.max(8, Math.min(maxBottom - h, ty));
     t.setPosition(tx, ty).setVisible(true);
   }
 
@@ -1155,10 +1681,16 @@ export default class UIScene extends Phaser.Scene {
     this.updateBossBar();
 
     const d = this.game_.dungeon;
+    const diff = getDifficulty(state.difficulty);
     if (state.mode === 'village') {
       this.locText.setText('餘燼村（安全區）').setColor('#ffd890');
     } else if (d && d.biome) {
       this.locText.setText(`第 ${state.floor} 層 · ${d.biome.name}`).setColor('#f0c090');
+    }
+    if (this.diffBadge) {
+      this.diffBadge.setPosition(this.locText.x + this.locText.width + 8, 14)
+        .setText(`【${diff.name}】`)
+        .setColor(diff.color);
     }
     this.lvlText.setText(`等級 ${state.level}　擊殺 ${state.kills}`);
     this.pointsText.setText(state.points > 0 ? `可分配屬性點：${state.points}（按 C）` : '');
@@ -1166,15 +1698,78 @@ export default class UIScene extends Phaser.Scene {
     if (state.buffs && state.buffs.frenzy > 0) buffs.push(`狂戰祝福 ${Math.ceil(state.buffs.frenzy / 1000)}s`);
     if (state.buffs && state.buffs.arcane > 0) buffs.push(`奧術祝福 ${Math.ceil(state.buffs.arcane / 1000)}s`);
     if (state.buffs && state.buffs.bloodBoil > 0) buffs.push(`鮮血狂怒 ${Math.ceil(state.buffs.bloodBoil / 1000)}s`);
+    if (state.buffs && state.buffs.shadowCrit > 0) buffs.push(`影殺必爆 ${Math.ceil(state.buffs.shadowCrit / 1000)}s`);
     if (state.buffs && state.buffs.shield > 0 && state.shield > 0) buffs.push(`聖光護盾 ${Math.ceil(state.buffs.shield / 1000)}s`);
     this.buffText.setText(buffs.join(' · '));
     const st = getStats();
-    this.auraText.setText(st.activeAuras.length ? '光環：' + st.activeAuras.map((a) => a.def.name).join(' · ') : '');
+    const auraStr = st.activeAuras.length ? '光環：' + st.activeAuras.map((a) => a.def.name).join(' · ') : '';
+    const setStr = st.activeSets && st.activeSets.length
+      ? '套裝：' + st.activeSets.map((o) => `${o.def.name}(${o.count}/4)`).join(' · ')
+      : '';
+    this.auraText.setText([auraStr, setStr].filter(Boolean).join('　'));
     this.goldText.setText(`${state.gold}`);
     this.shardText.setText(`${state.shards}`);
+    if (this.essenceText) this.essenceText.setText(`${state.setEssence || 0}`);
 
-    if (this.bagBtn) this.bagBtn.bg.setStrokeStyle(2, state.points > 0 ? 0x80d060 : 0x6a4a2a);
-    if (this.muteBtn) this.muteBtn.t.setText(Sfx.muted ? '音效：關' : '音效：開');
-    if (this.navBtn) this.navBtn.t.setText(state.mode === 'village' ? '地城 [G]' : '回村 [T]');
+    if (this.bagBtn) {
+      const hasGearToEquip = state.points === 0 && !SLOTS.some((sl) => state.equipment[sl]) && state.inventory.some((i) => i.kind === 'equip');
+      const pulseCol = state.points > 0 ? 0x80d060 : hasGearToEquip ? 0xffd040 : 0x6a4a2a;
+      this.bagBtn.bg.setStrokeStyle(2, pulseCol);
+    }
+
+    // 新手引導橫幅更新
+    if (this.tutBanner) {
+      const tut = state.tutorial || {};
+      const hideTut = !!this.activeModal || !!this.bossBar?.visible || tut.dismissed;
+      let bannerMsg = '';
+      if (!hideTut) {
+        if (this.time.now < this.tutFlashUntil && this.tutFlashMsg) {
+          bannerMsg = this.tutFlashMsg;
+        } else if (state.mode === 'village' && !tut.enteredDungeon) {
+          if (!tut.dummyDone) bannerMsg = '新手引導：先攻擊左下「訓練木樁」熟悉走位與技能，或點上方 NPC 互動';
+          else if (!tut.smithDone) bannerMsg = '新手引導：點擊左上「鐵匠 布朗」查看鍛造爐，或點右上「深淵傳送門」出征！';
+          else bannerMsg = '新手引導：點擊右上「深淵傳送門」或按 [G] 踏入無盡地城第 1 層！';
+        }
+      }
+      this.tutBanner.setVisible(!!bannerMsg);
+      if (bannerMsg) this.tutText.setText(bannerMsg);
+    }
+    if (this.muteBtn) { this.muteBtn.t.setText(Sfx.muted ? '音效:關' : '音效:開'); this.muteBtn.fit?.(); }
+    if (this.touchBtn) {
+      this.touchBtn.t.setText(state.touchMode ? '觸控:開' : '觸控:關').setColor(state.touchMode ? '#80e8ff' : '#e0c090');
+      this.touchBtn.bg.setStrokeStyle(2, state.touchMode ? 0x50b8e8 : 0x6a4a2a);
+      this.touchBtn.fit?.();
+    }
+    if (this.navBtn) { this.navBtn.t.setText(state.mode === 'village' ? '地城[G]' : '回村[T]'); this.navBtn.fit?.(); }
+
+    // 觸控介面狀態更新：長按連擊、翻滾冷卻、動態互動標籤
+    if (state.touchMode && !this.activeModal && this.touchControls?.visible) {
+      if (this.attackPointerId !== null && !this.game_.player.dead) {
+        this.game_.attackNearest();
+      }
+      const dCd = this.game_.player?.dodgeCd || 0;
+      if (this.touchDodgeCdT) {
+        this.touchDodgeCdT.setText(dCd > 0 ? (dCd / 1000).toFixed(1) : '');
+      }
+      const near = this.game_.getNearestInteractable?.();
+      if (this.touchInteractBg && this.touchInteractT) {
+        if (near) {
+          const lt = near.label?.text || '';
+          const short = lt.includes('鐵匠') ? '鍛造'
+            : lt.includes('深淵傳送門') ? '傳送門'
+            : lt.includes('回村') ? '回村'
+            : lt.includes('前往第') ? '下一層'
+            : lt.includes('聖泉') ? '聖泉'
+            : lt.includes('寶箱') ? '開寶箱'
+            : lt.includes('祭壇') ? '祈禱'
+            : '互動';
+          this.touchInteractBg.setFillStyle(0x282012, 0.94).setStrokeStyle(2.5, 0xffe060);
+          this.touchInteractT.setText(short).setColor('#ffe890');
+        } else {
+          this.touchInteractBg.setFillStyle(0x16141a, 0.42).setStrokeStyle(2, 0x706050, 0.55);
+          this.touchInteractT.setText('互動').setColor('#908070');
+        }
+      }
+    }
   }
 }

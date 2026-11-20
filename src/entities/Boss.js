@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import { PLAYER_R } from './Player.js';
+import { state } from '../state.js';
+import { getDifficulty } from '../systems/difficulty.js';
 
 export const BOSS_TYPES = {
   bone: {
@@ -72,10 +74,11 @@ export default class Boss {
       drop: 1,
     };
 
-    this.maxHp = Math.round(def.hp * Math.pow(1.42, floor - 1));
+    const diff = getDifficulty(state.difficulty);
+    this.maxHp = Math.max(1, Math.round(def.hp * Math.pow(1.42, floor - 1) * diff.hpMul));
     this.hp = this.maxHp;
-    this.dmg = Math.round(def.dmg * (1 + (floor - 1) * 0.22));
-    this.xp = Math.round(320 * (1 + (floor - 1) * 0.45));
+    this.dmg = Math.max(1, Math.round(def.dmg * (1 + (floor - 1) * 0.22) * diff.dmgMul));
+    this.xp = Math.max(1, Math.round(320 * (1 + (floor - 1) * 0.45) * diff.xpMul));
     this.baseSpeed = def.speed;
     this.speed = def.speed;
     this.dead = false;
