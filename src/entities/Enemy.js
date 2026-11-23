@@ -102,9 +102,20 @@ export default class Enemy {
   get fx() { return this.sprite.x; }
   get fy() { return this.sprite.y + this.T.foot; }
 
-  flash() {
-    this.flashT = 110;
-    this.sprite.setTintFill(0xff2a2a);
+  flash(color = 0xffffff, duration = 100) {
+    this.flashT = duration;
+    this.sprite.setTintFill(color);
+    if (!this.wind && state.vfxEnabled && !this.dead) {
+      this._flashTween?.stop();
+      this.sprite.setScale(1.13, 0.89);
+      this._flashTween = this.scene.tweens.add({
+        targets: this.sprite,
+        scaleX: 1,
+        scaleY: 1,
+        duration: 100,
+        ease: 'Quad.Out',
+      });
+    }
   }
 
   applySlow(ms) {
@@ -113,10 +124,22 @@ export default class Enemy {
   }
 
   knockback(ax, ay, force = 160) {
-    if (this.isDummy) return;
-    if (this.T.elite) force *= 0.35;
+    if (this.isDummy) {
+      const dir = ax >= 0 ? 1 : -1;
+      this._wobbleTween?.stop();
+      this.sprite.setAngle(0);
+      this._wobbleTween = this.scene.tweens.add({
+        targets: this.sprite,
+        angle: dir * 11,
+        duration: 55,
+        yoyo: true,
+        ease: 'Quad.Out',
+      });
+      return;
+    }
+    if (this.T.elite) force *= 0.42;
     const d = Math.hypot(ax, ay) || 1;
-    this.knock = { vx: (ax / d) * force, vy: (ay / d) * force, t: 110 };
+    this.knock = { vx: (ax / d) * force, vy: (ay / d) * force, t: 115 };
   }
 
   moveToward(tx, ty, speed, dt) {
@@ -345,6 +368,8 @@ export default class Enemy {
   }
 
   destroyVisuals() {
+    this._flashTween?.stop();
+    this._wobbleTween?.stop();
     this.shadow.destroy();
     if (this.aura) this.aura.destroy();
     if (this.label) this.label.destroy();

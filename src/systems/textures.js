@@ -1250,6 +1250,90 @@ export function generateTextures(scene) {
   canvasTex(scene, 'spark', 6, 6, (ctx) => { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 6, 6); }, true);
   canvasTex(scene, 'pixel', 3, 3, (ctx) => { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 3, 3); }, true);
 
+  // 輕量戰鬥特效貼圖（參考 00GameDevs：火焰拖尾、方向性火星、空心衝擊波、受擊星芒、餘燼地裂）
+  canvasTex(scene, 'vfx_flame_wisp', 24, 24, (ctx) => {
+    const g = ctx.createRadialGradient(13, 12, 1, 12, 12, 11);
+    g.addColorStop(0, 'rgba(255,246,204,1)');
+    g.addColorStop(0.32, 'rgba(255,154,68,0.92)');
+    g.addColorStop(0.68, 'rgba(255,82,24,0.45)');
+    g.addColorStop(1, 'rgba(220,48,8,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(12, 12, 11.5, 8.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  canvasTex(scene, 'vfx_spark_streak', 18, 6, (ctx) => {
+    const g = ctx.createLinearGradient(0, 3, 18, 3);
+    g.addColorStop(0, 'rgba(255,130,30,0)');
+    g.addColorStop(0.35, 'rgba(255,196,72,0.85)');
+    g.addColorStop(0.75, 'rgba(255,250,224,1)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(0, 3);
+    ctx.quadraticCurveTo(9, 0, 18, 3);
+    ctx.quadraticCurveTo(9, 6, 0, 3);
+    ctx.fill();
+  });
+
+  canvasTex(scene, 'vfx_ring', 96, 96, (ctx) => {
+    const g = ctx.createRadialGradient(48, 48, 28, 48, 48, 47);
+    g.addColorStop(0, 'rgba(255,255,255,0)');
+    g.addColorStop(0.56, 'rgba(255,255,255,0)');
+    g.addColorStop(0.74, 'rgba(255,255,255,0.95)');
+    g.addColorStop(0.86, 'rgba(255,255,255,0.42)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 96, 96);
+  });
+
+  canvasTex(scene, 'vfx_hit_star', 32, 32, (ctx) => {
+    ctx.translate(16, 16);
+    const cg = ctx.createRadialGradient(0, 0, 0, 0, 0, 10);
+    cg.addColorStop(0, 'rgba(255,255,255,1)');
+    cg.addColorStop(0.45, 'rgba(255,244,200,0.7)');
+    cg.addColorStop(1, 'rgba(255,200,100,0)');
+    ctx.fillStyle = cg;
+    ctx.fillRect(-10, -10, 20, 20);
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    for (let i = 0; i < 4; i++) {
+      ctx.rotate(Math.PI / 2);
+      ctx.beginPath();
+      ctx.moveTo(0, -1.8);
+      ctx.lineTo(15, 0);
+      ctx.lineTo(0, 1.8);
+      ctx.closePath();
+      ctx.fill();
+    }
+  });
+
+  canvasTex(scene, 'vfx_scorch_crack', 96, 96, (ctx) => {
+    const sg = ctx.createRadialGradient(48, 48, 4, 48, 48, 42);
+    sg.addColorStop(0, 'rgba(16,6,4,0.62)');
+    sg.addColorStop(0.6, 'rgba(16,6,4,0.34)');
+    sg.addColorStop(1, 'rgba(16,6,4,0)');
+    ctx.fillStyle = sg;
+    ctx.fillRect(0, 0, 96, 96);
+    const rays = [0.2, 1.25, 2.35, 3.45, 4.55, 5.55];
+    ctx.lineCap = 'round';
+    for (let i = 0; i < rays.length; i++) {
+      const a = rays[i];
+      const len1 = 15 + (i % 2) * 5;
+      const len2 = 30 + ((i + 1) % 3) * 5;
+      const midA = a + (i % 2 === 0 ? 0.16 : -0.15);
+      const x1 = 48 + Math.cos(a) * 5, y1 = 48 + Math.sin(a) * 5;
+      const xm = 48 + Math.cos(midA) * len1, ym = 48 + Math.sin(midA) * len1;
+      const x2 = 48 + Math.cos(a - 0.06) * len2, y2 = 48 + Math.sin(a - 0.06) * len2;
+      ctx.strokeStyle = 'rgba(255,106,24,0.82)';
+      ctx.lineWidth = 3.2;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(xm, ym); ctx.lineTo(x2, y2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,208,104,0.95)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(xm, ym); ctx.lineTo(x2, y2); ctx.stroke();
+    }
+  });
+
   // 揮砍弧光
   canvasTex(scene, 'slash', 128, 128, (ctx) => {
     ctx.translate(64, 64);

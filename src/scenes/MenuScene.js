@@ -4,7 +4,7 @@ import { Sfx } from '../systems/audio.js';
 import { TILE } from '../systems/textures.js';
 import { getSaveMeta, loadGame, saveGame, clearSave } from '../systems/save.js';
 import { DIFFICULTY_LIST, DEFAULT_DIFFICULTY, getDifficulty } from '../systems/difficulty.js';
-import { state, setDifficulty, loadTouchPref } from '../state.js';
+import { state, setDifficulty, loadTouchPref, loadVfxPref, setVfxEnabled } from '../state.js';
 
 const HELP = [
   '【電腦鍵鼠操作】',
@@ -27,6 +27,7 @@ export default class MenuScene extends Phaser.Scene {
     const W = 1280, H = 720;
     this.starting = false;
     state.touchMode = loadTouchPref();
+    state.vfxEnabled = loadVfxPref();
     this.cameras.main.setBackgroundColor('#050304');
 
     // 背景磚牆
@@ -47,7 +48,7 @@ export default class MenuScene extends Phaser.Scene {
     });
 
     // 餘燼粒子
-    this.add.particles(0, 0, 'spark', {
+    this.menuEmbers = this.add.particles(0, 0, 'spark', {
       x: { min: 0, max: W },
       y: H + 10,
       lifespan: 6000,
@@ -57,8 +58,35 @@ export default class MenuScene extends Phaser.Scene {
       alpha: { start: 1, end: 0 },
       tint: [0xff6a00, 0xffa030, 0xff3000],
       frequency: 90,
+      maxAliveParticles: 24,
       blendMode: 'ADD',
     });
+
+    const vfxBtnBg = this.add.rectangle(W - 76, 32, 112, 34, 0x160f0c, 0.92)
+      .setDepth(80).setInteractive({ useHandCursor: true });
+    const vfxBtnTxt = txt(this, W - 76, 32, '', 14, '#ffd880').setOrigin(0.5).setDepth(81);
+    const updateVfxBtn = () => {
+      const on = !!state.vfxEnabled;
+      vfxBtnBg.setStrokeStyle(1.5, on ? 0xd88838 : 0x584030);
+      vfxBtnTxt.setText(on ? '特效：開啟' : '特效：關閉').setColor(on ? '#ffd880' : '#9a8a7a');
+      if (this.menuEmbers) {
+        if (on) {
+          this.menuEmbers.setVisible(true);
+          this.menuEmbers.start();
+        } else {
+          this.menuEmbers.stop();
+          this.menuEmbers.killAll();
+          this.menuEmbers.setVisible(false);
+        }
+      }
+    };
+    vfxBtnBg.on('pointerdown', () => {
+      Sfx.init();
+      Sfx.play('click');
+      setVfxEnabled(!state.vfxEnabled);
+      updateVfxBtn();
+    });
+    updateVfxBtn();
 
     const title = this.add.text(W / 2, 144, '餘燼地城', {
       fontFamily: SERIF, fontSize: '90px', color: '#d8a050', stroke: '#2a0800', strokeThickness: 10,

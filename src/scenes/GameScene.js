@@ -7,8 +7,9 @@ import Player, { PLAYER_R } from '../entities/Player.js';
 import Enemy from '../entities/Enemy.js';
 import Boss from '../entities/Boss.js';
 import {
-  state, resetState, getStats, getEffectiveSkillLevel, addXp, INV_SIZE,
+  state, resetState, getStats, getEffectiveSkillLevel, addXp, INV_SIZE, setVfxEnabled,
 } from '../state.js';
+import { VfxManager } from '../systems/vfx.js';
 import { FONT, QUALITY_COLORS, QUALITY_HEX } from '../ui.js';
 import { generateItem, generateSetItem, generateSkillBook, itemDisplayName } from '../systems/items.js';
 import { getBossSetId } from '../systems/sets.js';
@@ -156,6 +157,7 @@ export default class GameScene extends Phaser.Scene {
     this.dark = this.add.renderTexture(0, 0, VW, VH).setOrigin(0).setScrollFactor(0).setDepth(9000);
     this.lightStamp = this.make.image({ key: 'light', add: false });
     this.hpGfx = this.add.graphics().setDepth(9400);
+    this.vfx = new VfxManager(this);
 
     // ---- 輸入
     this.setupInput();
@@ -163,7 +165,7 @@ export default class GameScene extends Phaser.Scene {
     this.revealAround();
 
     this.scene.launch('UI');
-    this.events.once('shutdown', () => { this.scene.stop('UI'); Sfx.stopAmbient(); });
+    this.events.once('shutdown', () => { this.scene.stop('UI'); Sfx.stopAmbient(); this.vfx?.destroy(); });
     Sfx.startAmbient();
 
     // 飄浮餘燼
@@ -173,8 +175,9 @@ export default class GameScene extends Phaser.Scene {
       speedX: { min: -12, max: 12 }, speedY: { min: -30, max: -8 },
       scale: { start: 0.45, end: 0 }, alpha: { start: 0.7, end: 0 }, lifespan: 4000,
       tint: this.mode === 'village' ? [0xffa040, 0xffd070] : [biome.torchTint, 0xffa040, 0xff4010],
-      frequency: 120, blendMode: 'ADD',
+      frequency: 120, maxAliveParticles: this.vfx.isLowSpec() ? 10 : 18, blendMode: 'ADD',
     }).setDepth(9050);
+    this.vfx.applyEnabledState(state.vfxEnabled);
 
     window.__ember.scene = this;
     window.__ember.enterVillage = () => this.enterVillage();
@@ -1093,6 +1096,14 @@ export default class GameScene extends Phaser.Scene {
       const m = Sfx.toggleMute();
       this.msg(m ? '音效：關閉' : '音效：開啟', '#aaaaaa');
     });
+    kb.on('keydown-V', () => this.toggleVfx());
+  }
+
+  toggleVfx() {
+    const next = setVfxEnabled(!state.vfxEnabled);
+    this.vfx?.applyEnabledState(next);
+    this.msg(next ? '戰鬥特效：開啟' : '戰鬥特效：關閉（省電模式）', next ? '#ffd880' : '#aaaaaa');
+    return next;
   }
 
   getNearestInteractable(maxDist = 145) {
@@ -1393,7 +1404,13 @@ export default class GameScene extends Phaser.Scene {
       let dmg = s.attack * (0.85 + Math.random() * 0.3);
       if (crit) dmg *= s.critDmg * (shadow ? 1.5 : 1);
       if (shadow) this.floatText(e.fx, e.sprite.y - e.T.h / 2 - 22, '影殺爆擊！', '#ff7090', 16);
-      this.damageEnemy(e, Math.max(1, Math.round(dmg)), { crit, kx: e.fx - p.fx, ky: e.fy - p.fy });
+      this.damageEnemy(e, Math.max(1, Math.round(dmg)), {
+        crit,
+        isBasicAttack: true,
+        kx: e.fx - p.fx,
+        ky: e.fy - p.fy,
+        force: crit ? 205 : 175,
+      });
     });
   }
 
@@ -1407,12 +1424,24 @@ export default class GameScene extends Phaser.Scene {
     if (!e.isDummy) e.hp -= amount;
     e.aggro = true;
     if (e.isBoss && !this.bossActive) this.startBossFight();
-    e.flash();
+    e.flash(0xffffff, 100);
     if (opt.kx !== undefined) e.knockback(opt.kx, opt.ky, opt.force || 150);
     const color = opt.color || (opt.crit ? '#ffd030' : '#ffffff');
     this.floatText(e.fx + rand(-8, 8), e.sprite.y - e.T.h / 2, opt.crit ? `${amount}!` : `${amount}`, color, opt.crit ? 26 : 19);
     this.sfx(opt.crit ? 'crit' : 'hit');
-    this.bloodBurst(e.fx, e.sprite.y, opt.crit ? 10 : 5, e.isDummy ? 0xc09850 : e.isBoss ? 0x9020c0 : e.type === 'gargoyle' || e.type === 'golem' ? 0x8a9095 : 0xcfc6a8);
+    if (opt.isBasicAttack) {
+      const hitAng = Math.atan2(
+        opt.ky !== undefined ? opt.ky : (e.fy - this.player.fy),
+        opt.kx !== undefined ? opt.kx : (e.fx - this.player.fx)
+      );
+      this.vfx.playBasicHit(e.fx, e.sprite.y - 4, hitAng, {
+        crit: !!opt.crit,
+        isDummy: !!e.isDummy,
+        isBoss: !!e.isBoss,
+      });
+    }
+    const debrisCount = opt.isBasicAttack ? (opt.crit ? 5 : 3) : (opt.crit ? 10 : 5);
+    this.bloodBurst(e.fx, e.sprite.y, debrisCount, e.isDummy ? 0xc09850 : e.isBoss ? 0x9020c0 : e.type === 'gargoyle' || e.type === 'golem' ? 0x8a9095 : 0xcfc6a8);
 
     const s = getStats();
     if (!e.isDummy && amount > 0 && !this.player.dead) {
@@ -1656,21 +1685,14 @@ export default class GameScene extends Phaser.Scene {
     const ang = Math.atan2(w.y - sy, w.x - sx);
     p.startSwing(ang, 200);
     this.sfx('fireball');
-    const spr = this.add.image(sx + Math.cos(ang) * 20, sy + Math.sin(ang) * 20, 'fireball').setScale(1.3).setBlendMode(Phaser.BlendModes.ADD);
-    const trail = this.add.particles(0, 0, 'spark', {
-      follow: spr, speed: { min: 10, max: 40 }, scale: { start: 0.7, end: 0 }, lifespan: 350,
-      tint: [0xff6000, 0xffb030, 0xff3000], frequency: 18, blendMode: 'ADD',
-    }).setDepth(9200);
+    const fx = sx + Math.cos(ang) * 20, fy = sy + Math.sin(ang) * 20;
+    const vis = this.vfx.createFireballVisuals(fx, fy, ang, false);
     const dmg = Math.round((12 + s.int * 2 + state.level * 2) * s.spellPower * sk.powerMult);
     this.projectiles.push({
-      sprite: spr, x: spr.x, y: spr.y, vx: Math.cos(ang) * 540, vy: Math.sin(ang) * 540, friendly: true, life: 1100, r: 10, light: 150,
-      onUpdate: (pr) => pr.sprite.setRotation(pr.sprite.rotation + 0.3),
-      onHit: (pr) => {
-        trail.stopFollow();
-        trail.stop();
-        this.time.delayedCall(400, () => { if (trail.active) trail.destroy(); });
-        this.explosion(pr.x, pr.y, 80, dmg, 'explode', { allowSplit: true, baseAng: ang });
-      },
+      sprite: vis.sprite, tail: vis.tail, trailT: 0, pulseT: 0, isSplit: false,
+      x: fx, y: fy, vx: Math.cos(ang) * 540, vy: Math.sin(ang) * 540, friendly: true, life: 1100, r: 10, light: 155,
+      onUpdate: (pr, dt) => this.vfx.updateFireballVisuals(pr, dt),
+      onHit: (pr) => this.explosion(pr.x, pr.y, 80, dmg, 'explode', { allowSplit: true, baseAng: ang }),
     });
   }
 
@@ -1693,25 +1715,20 @@ export default class GameScene extends Phaser.Scene {
         : (baseAng + offsets[i]);
       const sx = cx + Math.cos(ang) * 18;
       const sy = cy + Math.sin(ang) * 18;
-      const spr = this.add.image(sx, sy, 'fireball').setScale(0.82).setBlendMode(Phaser.BlendModes.ADD);
+      const vis = this.vfx.createFireballVisuals(sx, sy, ang, true);
       this.projectiles.push({
-        sprite: spr, x: sx, y: sy, vx: Math.cos(ang) * 480, vy: Math.sin(ang) * 480,
+        sprite: vis.sprite, tail: vis.tail, trailT: 0, pulseT: 0, isSplit: true,
+        x: sx, y: sy, vx: Math.cos(ang) * 480, vy: Math.sin(ang) * 480,
         friendly: true, life: 750, r: 7, light: 95,
-        onUpdate: (pr) => pr.sprite.setRotation(pr.sprite.rotation + 0.35),
-        onHit: (pr) => this.explosion(pr.x, pr.y, 55, splitDmg, 'explode', { allowSplit: false, noShadow: true }),
+        onUpdate: (pr, dt) => this.vfx.updateFireballVisuals(pr, dt),
+        onHit: (pr) => this.explosion(pr.x, pr.y, 55, splitDmg, 'explode', { allowSplit: false, noShadow: true, isSplit: true }),
       });
     }
   }
 
   explosion(x, y, r, dmg, sfxName = 'explode', opt = {}) {
     this.sfx(sfxName);
-    this.cameras.main.shake(r > 100 ? 280 : 100, r > 100 ? 0.009 : 0.003);
-    const c = this.add.image(x, y, 'glow').setTint(0xff7020).setBlendMode(Phaser.BlendModes.ADD).setScale(0.3).setDepth(9200);
-    this.tweens.add({ targets: c, scale: (r * 2.4) / 128, alpha: 0, duration: 380, onComplete: () => c.destroy() });
-    this.burst(x, y, r > 100 ? 45 : 30, [0xff6000, 0xffc040, 0xff2000], r * 2.5, 550);
-    const l = { x, y, r: r * 2.5, a: 1 };
-    this.extraLights.push(l);
-    this.tweens.add({ targets: l, r: 0, duration: 420, onComplete: () => { this.extraLights = this.extraLights.filter((o) => o !== l); } });
+    this.vfx.playFireballExplosion(x, y, r, { isSplit: !!opt.isSplit, isMeteor: sfxName === 'meteor' });
     this.smashPropsInRadius(x, y, r);
     this.burnWebsInRadius(x, y, r);
     const s = getStats();
@@ -2462,6 +2479,7 @@ export default class GameScene extends Phaser.Scene {
     if (!pr || pr.dead) return;
     pr.dead = true;
     if (pr.sprite && pr.sprite.active) pr.sprite.destroy();
+    if (pr.tail && pr.tail.active) pr.tail.destroy();
     if (pr.glow && pr.glow.active) pr.glow.destroy();
     const idx = this.projectiles.indexOf(pr);
     if (idx !== -1) this.projectiles.splice(idx, 1);
@@ -2516,36 +2534,30 @@ export default class GameScene extends Phaser.Scene {
     const t = this.add.text(x, y, str, {
       fontFamily: FONT, fontSize: `${size}px`, color, stroke: '#000', strokeThickness: 4, fontStyle: 'bold',
     }).setOrigin(0.5).setDepth(9500);
-    this.tweens.add({ targets: t, y: y - 40, alpha: { from: 1, to: 0 }, duration: 900, ease: 'Cubic.Out', onComplete: () => t.destroy() });
-    if (size >= 24) { t.setScale(1.5); this.tweens.add({ targets: t, scale: 1, duration: 150 }); }
+    this.tweens.add({
+      targets: t,
+      x: x + rand(-10, 10),
+      y: y - 40,
+      alpha: { from: 1, to: 0 },
+      duration: 900,
+      ease: 'Cubic.Out',
+      onComplete: () => t.destroy(),
+    });
+    if (size >= 24) {
+      t.setScale(1.5);
+      this.tweens.add({ targets: t, scale: 1, duration: 150, ease: 'Back.Out' });
+    } else if (size >= 18) {
+      t.setScale(1.22);
+      this.tweens.add({ targets: t, scale: 1, duration: 120, ease: 'Back.Out' });
+    }
   }
 
   burst(x, y, count, tints, speed = 120, life = 500) {
-    const em = this.add.particles(x, y, 'spark', {
-      speed: { min: speed * 0.3, max: speed },
-      angle: { min: 0, max: 360 },
-      scale: { start: 0.8, end: 0 },
-      lifespan: life,
-      tint: tints,
-      blendMode: 'ADD',
-      emitting: false,
-    }).setDepth(9300);
-    em.explode(count);
-    this.time.delayedCall(life + 100, () => em.destroy());
+    this.vfx.spawnBurst(x, y, count, tints, speed, life);
   }
 
   bloodBurst(x, y, count, tint) {
-    const em = this.add.particles(x, y, 'pixel', {
-      speed: { min: 40, max: 140 },
-      angle: { min: 0, max: 360 },
-      gravityY: 300,
-      scale: { start: 1.3, end: 0.4 },
-      lifespan: 400,
-      tint,
-      emitting: false,
-    }).setDepth(9300);
-    em.explode(count);
-    this.time.delayedCall(500, () => em.destroy());
+    this.vfx.spawnDebris(x, y, count, tint);
   }
 
   slamEffect(x, y, r) {

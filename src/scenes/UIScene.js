@@ -161,8 +161,8 @@ export default class UIScene extends Phaser.Scene {
         ? '左下搖桿移動｜右下按鈕互動／攻擊｜點技能自動瞄準｜右上可切換「觸控」'
         : '左下搖桿移動｜右下「攻擊／互動／翻滾」｜點下方 1~5 技能自動瞄準敵人')
       : (state.mode === 'village'
-        ? 'WASD/方向鍵或左鍵移動｜點擊NPC自動互動｜1~5 技能｜B 背包｜G 傳送門｜M 靜音'
-        : 'WASD/方向鍵或左鍵移動｜空白/右鍵 翻滾｜1~5 技能｜B 背包｜T 回村');
+        ? 'WASD/方向鍵或左鍵移動｜點擊NPC自動互動｜1~5 技能｜B 背包｜G 傳送門｜V 特效｜M 靜音'
+        : 'WASD/方向鍵或左鍵移動｜空白/右鍵 翻滾｜1~5 技能｜B 背包｜V 特效｜T 回村');
     this.hint = txt(this, W / 2, H - 120, hintMsg, 15, '#c8b898').setOrigin(0.5);
     this.tweens.add({ targets: this.hint, alpha: 0, delay: 9000, duration: 1500 });
 
@@ -335,7 +335,7 @@ export default class UIScene extends Phaser.Scene {
 
   buildQuickButtons() {
     const y = H - 54;
-    const w = 76;
+    const w = 70;
     const mkBtn = (x, label, cb) => {
       const bg = this.add.rectangle(x, y, w, 40, 0x18100d, 0.95).setStrokeStyle(2, 0x6a4a2a).setInteractive({ useHandCursor: true });
       const t = txt(this, x, y, label, 12, '#e0c090').setOrigin(0.5);
@@ -349,12 +349,12 @@ export default class UIScene extends Phaser.Scene {
       bg.on('pointerdown', cb);
       return { bg, t, x, y, fit };
     };
-    this.navBtn = mkBtn(892, state.mode === 'village' ? '地城[G]' : '回村[T]', () => {
+    this.navBtn = mkBtn(854, state.mode === 'village' ? '地城[G]' : '回村[T]', () => {
       if (state.mode === 'village') this.setModal('portal');
       else this.game_.enterVillage();
     });
-    this.bagBtn = mkBtn(974, '背包[B]', () => this.togglePanel());
-    this.saveBtn = mkBtn(1056, '存檔', () => {
+    this.bagBtn = mkBtn(930, '背包[B]', () => this.togglePanel());
+    this.saveBtn = mkBtn(1006, '存檔', () => {
       Sfx.init();
       if (saveGame()) {
         Sfx.play('book');
@@ -364,14 +364,19 @@ export default class UIScene extends Phaser.Scene {
         this.game_.msg('存檔失敗（瀏覽器儲存空間受限）', '#ff8080');
       }
     });
-    this.touchBtn = mkBtn(1138, state.touchMode ? '觸控:開' : '觸控:關', () => {
+    this.vfxBtn = mkBtn(1082, state.vfxEnabled ? '特效:開' : '特效:關', () => {
+      Sfx.init();
+      Sfx.play('click');
+      this.game_.toggleVfx();
+    });
+    this.touchBtn = mkBtn(1158, state.touchMode ? '觸控:開' : '觸控:關', () => {
       Sfx.init();
       Sfx.play('click');
       const next = setTouchMode(!state.touchMode);
       this.updateTouchVisibility();
       this.game_.msg(next ? '已開啟手機觸控操作介面' : '已切換為電腦鍵鼠操作', '#80e8ff');
     });
-    this.muteBtn = mkBtn(1220, '音效:開', () => {
+    this.muteBtn = mkBtn(1234, '音效:開', () => {
       Sfx.init();
       const m = Sfx.toggleMute();
       this.game_.msg(m ? '音效：關閉' : '音效：開啟', '#aaaaaa');
@@ -995,7 +1000,7 @@ export default class UIScene extends Phaser.Scene {
       const rwLine = rw
         ? `✦ ${rw.name}：${rw.short}`
         : sockCount > fitted.length ? '點擊下方符文袋中的符文即可鑲嵌'
-        : sockCount > 0 ? '插孔已滿（重鑄可保留符文；取出需花費金幣）' : '';
+          : sockCount > 0 ? '插孔已滿（重鑄可保留符文；取出需花費金幣）' : '';
       if (rwLine) c.add(txt(this, X + 80, Y + 154, rwLine, 11, rw ? rw.color : '#8a7a6a'));
 
       if (fitted.length > 0) {
@@ -1734,6 +1739,11 @@ export default class UIScene extends Phaser.Scene {
       this.tutBanner.setVisible(!!bannerMsg);
       if (bannerMsg) this.tutText.setText(bannerMsg);
     }
+    if (this.vfxBtn) {
+      this.vfxBtn.t.setText(state.vfxEnabled ? '特效:開' : '特效:關').setColor(state.vfxEnabled ? '#ffd880' : '#9a8a7a');
+      this.vfxBtn.bg.setStrokeStyle(2, state.vfxEnabled ? 0xd88838 : 0x5a4a3a);
+      this.vfxBtn.fit?.();
+    }
     if (this.muteBtn) { this.muteBtn.t.setText(Sfx.muted ? '音效:關' : '音效:開'); this.muteBtn.fit?.(); }
     if (this.touchBtn) {
       this.touchBtn.t.setText(state.touchMode ? '觸控:開' : '觸控:關').setColor(state.touchMode ? '#80e8ff' : '#e0c090');
@@ -1757,12 +1767,12 @@ export default class UIScene extends Phaser.Scene {
           const lt = near.label?.text || '';
           const short = lt.includes('鐵匠') ? '鍛造'
             : lt.includes('深淵傳送門') ? '傳送門'
-            : lt.includes('回村') ? '回村'
-            : lt.includes('前往第') ? '下一層'
-            : lt.includes('聖泉') ? '聖泉'
-            : lt.includes('寶箱') ? '開寶箱'
-            : lt.includes('祭壇') ? '祈禱'
-            : '互動';
+              : lt.includes('回村') ? '回村'
+                : lt.includes('前往第') ? '下一層'
+                  : lt.includes('聖泉') ? '聖泉'
+                    : lt.includes('寶箱') ? '開寶箱'
+                      : lt.includes('祭壇') ? '祈禱'
+                        : '互動';
           this.touchInteractBg.setFillStyle(0x282012, 0.94).setStrokeStyle(2.5, 0xffe060);
           this.touchInteractT.setText(short).setColor('#ffe890');
         } else {

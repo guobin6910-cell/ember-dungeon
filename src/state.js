@@ -52,6 +52,32 @@ export function setTouchMode(val) {
   return next;
 }
 
+export function loadVfxPref() {
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = window.localStorage.getItem(PREFS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.vfxEnabled === 'boolean') return parsed.vfxEnabled;
+      }
+    } catch { /* ignore */ }
+  }
+  return true;
+}
+
+export function setVfxEnabled(val) {
+  const next = !!val;
+  state.vfxEnabled = next;
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = window.localStorage.getItem(PREFS_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      window.localStorage.setItem(PREFS_KEY, JSON.stringify({ ...(parsed || {}), vfxEnabled: next }));
+    } catch { /* ignore */ }
+  }
+  return next;
+}
+
 export function setDifficulty(id) {
   const diff = getDifficulty(id);
   state.difficulty = diff.id;
@@ -78,6 +104,7 @@ export function resetState(difficulty = null) {
   const eq = {};
   for (const s of SLOTS) eq[s] = null;
   const prevTouch = typeof state.touchMode === 'boolean' ? state.touchMode : loadTouchPref();
+  const prevVfx = typeof state.vfxEnabled === 'boolean' ? state.vfxEnabled : loadVfxPref();
   const diffId = getDifficulty(difficulty || state.difficulty || DEFAULT_DIFFICULTY).id;
   Object.assign(state, {
     level: 1,
@@ -89,6 +116,7 @@ export function resetState(difficulty = null) {
     points: 0,
     difficulty: diffId,
     touchMode: prevTouch,
+    vfxEnabled: prevVfx,
     mode: 'village',
     floor: 0,
     maxFloor: 1,

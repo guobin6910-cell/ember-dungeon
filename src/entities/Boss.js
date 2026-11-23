@@ -106,9 +106,9 @@ export default class Boss {
   get fx() { return this.sprite.x; }
   get fy() { return this.sprite.y + 40; }
 
-  flash() {
-    this.flashT = 90;
-    this.sprite.setTintFill(0xff4040);
+  flash(color = 0xffffff, duration = 100) {
+    this.flashT = duration;
+    this.sprite.setTintFill(color);
   }
 
   applySlow(ms) {
