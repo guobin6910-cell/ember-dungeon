@@ -165,7 +165,15 @@ export default class GameScene extends Phaser.Scene {
     this.revealAround();
 
     this.scene.launch('UI');
-    this.events.once('shutdown', () => { this.scene.stop('UI'); Sfx.stopAmbient(); this.vfx?.destroy(); });
+    this.events.once('shutdown', () => {
+      this.scene.stop('UI');
+      Sfx.stopAmbient();
+      if (this.whirl) {
+        this.vfx?.destroyWhirlVisuals(this.whirl);
+        this.whirl = null;
+      }
+      this.vfx?.destroy();
+    });
     Sfx.startAmbient();
 
     // 飄浮餘燼
@@ -1303,8 +1311,10 @@ export default class GameScene extends Phaser.Scene {
     this.lootTarget = null;
     this.holdMove = false;
     this.sfx('dodge');
+    this.vfx.playDodge(p, ang);
     this.grantShadowCrit(s);
-    for (let i = 1; i <= 3; i++) {
+    const ghostCount = state.vfxEnabled ? 3 : 1;
+    for (let i = 1; i <= ghostCount; i++) {
       this.time.delayedCall(i * 60, () => {
         if (!p.sprite.active) return;
         const g = this.add.image(p.sprite.x, p.sprite.y, 'player').setAlpha(0.4).setTint(0x80c0ff).setFlipX(p.facing < 0).setDepth(p.fy - 1);
@@ -1480,15 +1490,11 @@ export default class GameScene extends Phaser.Scene {
       hit.add(next);
       pts.push({ x: next.fx, y: next.sprite.y });
       this.damageEnemy(next, dmg, { color: '#80f0ff', isProc: true });
-      this.burst(next.fx, next.sprite.y, 6, [0x80f0ff, 0xffffff], 110, 240);
       lx = next.fx; ly = next.fy;
     }
     if (pts.length > 1) {
       this.sfx('lightning');
-      const g = this.add.graphics().setDepth(9300);
-      g.lineStyle(3, 0x60e0ff, 0.85);
-      for (let i = 0; i < pts.length - 1; i++) g.lineBetween(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
-      this.tweens.add({ targets: g, alpha: 0, duration: 220, onComplete: () => g.destroy() });
+      this.vfx.playChainLightning(pts, { isProc: true });
     }
   }
 
@@ -1534,8 +1540,7 @@ export default class GameScene extends Phaser.Scene {
         const pdmg = Math.max(6, Math.round((8 + s.int * 1.1 + state.level * 1.3) * s.spellPower));
         const tx = e.fx, ty = e.fy, R = 105;
         this.sfx('poison');
-        const boom = this.add.circle(tx, ty, 24, 0x70ff40, 0.32).setStrokeStyle(2.5, 0xa0ff70, 0.9).setDepth(3);
-        this.tweens.add({ targets: boom, scale: R / 24, alpha: 0, duration: 360, onComplete: () => boom.destroy() });
+        this.vfx.spawnRing(tx, ty, R, 0x78ff40, { depth: 3, alpha: state.vfxEnabled ? 0.72 : 0.4, duration: 360 });
         this.floatText(tx, ty - 28, '瘟疫擴散！', '#78ff70', 16);
         for (const oe of this.enemies.slice()) {
           if (oe.dead || oe.isDummy) continue;
@@ -1545,9 +1550,8 @@ export default class GameScene extends Phaser.Scene {
             this.damageEnemy(oe, Math.round(pdmg * 1.5), { color: '#78ff70', isProc: true });
           }
         }
-        const cloud = this.add.circle(tx, ty, R, 0x50d028, 0.20).setStrokeStyle(2, 0x90ff50, 0.65).setDepth(3);
-        const inner = this.add.image(tx, ty, 'glow').setTint(0x60e830).setBlendMode(Phaser.BlendModes.ADD).setScale(1.6).setAlpha(0.40).setDepth(3);
-        this.groundEffects.push({ x: tx, y: ty, r: R, t: 0, tickT: 500, dur: 3500, dmg: pdmg, visuals: [cloud, inner] });
+        const pVis = this.vfx.createPoisonCloudVisuals(tx, ty, R);
+        this.groundEffects.push({ x: tx, y: ty, r: R, t: 0, tickT: 500, dur: 3500, dmg: pdmg, visuals: pVis.visuals, vortex: pVis.vortex, vfxT: 0 });
       }
     }
 
@@ -1751,11 +1755,11 @@ export default class GameScene extends Phaser.Scene {
     this.attackTarget = null;
     this.sfx('whirl');
     const R = 100;
-    this.whirl = { t: 0, dur: 480, ticks: 0, dmg: s.attack * 0.9 * sk.powerMult };
-    const ring = this.add.image(p.fx, p.sprite.y, 'slash').setScale(1.6).setTint(0xd0e0ff).setBlendMode(Phaser.BlendModes.ADD).setDepth(9200);
-    const ring2 = this.add.image(p.fx, p.sprite.y, 'slash').setScale(1.6).setTint(0xffffff).setBlendMode(Phaser.BlendModes.ADD).setDepth(9200).setRotation(Math.PI);
-    this.whirl.fx = [ring, ring2];
-    this.whirl.R = R;
+    const wVis = this.vfx.createWhirlVisuals(p.fx, p.fy, R);
+    this.whirl = {
+      t: 0, dur: 480, ticks: 0, dmg: s.attack * 0.9 * sk.powerMult, R,
+      fx: wVis.fx, vortex: wVis.vortex, outer: wVis.outer, light: wVis.light, dustT: 0,
+    };
   }
 
   updateWhirl(dt) {
@@ -1764,7 +1768,7 @@ export default class GameScene extends Phaser.Scene {
     const p = this.player;
     w.t += dt;
     const rot = w.t * 0.03;
-    w.fx.forEach((f, i) => f.setPosition(p.fx, p.sprite.y + 4).setRotation(rot + i * Math.PI).setAlpha(1 - w.t / w.dur * 0.6));
+    this.vfx.updateWhirlVisuals(w, p, dt);
     p.sprite.setFlipX(Math.floor(w.t / 60) % 2 === 0);
     p.sword.setRotation(rot * 1.5);
     const tickAt = [0, 160, 320];
@@ -1781,15 +1785,14 @@ export default class GameScene extends Phaser.Scene {
       }
     }
     if (w.t >= w.dur) {
-      w.fx.forEach((f) => f.destroy());
+      this.vfx.destroyWhirlVisuals(w);
       this.whirl = null;
       const s = getStats();
       if (s.setEffects?.whirlQuake && !p.dead) {
         const R = 155;
         const qDmg = Math.round(s.attack * 2.2);
-        this.slamEffect(p.fx, p.fy, R);
-        const qRing = this.add.circle(p.fx, p.fy, 24, 0x38f288, 0.20).setStrokeStyle(4, 0xffd860, 0.92).setDepth(9200);
-        this.tweens.add({ targets: qRing, scale: R / 24, alpha: 0, duration: 380, ease: 'Cubic.Out', onComplete: () => qRing.destroy() });
+        this.sfx('slam');
+        this.vfx.playWhirlQuake(p.fx, p.fy, R);
         this.floatText(p.fx, p.sprite.y - 42, '震地衝擊！', '#38f288', 20);
         this.smashPropsInRadius(p.fx, p.fy, R);
         for (const e of this.enemies.slice()) {
@@ -1809,13 +1812,7 @@ export default class GameScene extends Phaser.Scene {
     state.hp = Math.min(s.maxHp, state.hp + amount);
     this.sfx('heal');
     this.floatText(p.fx, p.sprite.y - 36, `+${amount}`, '#60ff70', 24);
-    const em = this.add.particles(p.fx, p.fy, 'spark', {
-      x: { min: -24, max: 24 }, speedY: { min: -60, max: -140 }, scale: { start: 0.8, end: 0 }, lifespan: 800,
-      tint: [0x60ff70, 0xc0ffc0, 0x30c040], blendMode: 'ADD', quantity: 3, frequency: 25, duration: 500,
-    }).setDepth(9200);
-    this.time.delayedCall(1400, () => em.destroy());
-    const g = this.add.image(p.fx, p.fy, 'glow').setTint(0x40ff60).setBlendMode(Phaser.BlendModes.ADD).setScale(0.5, 0.25).setDepth(3);
-    this.tweens.add({ targets: g, scaleX: 2, scaleY: 1, alpha: 0, duration: 700, onComplete: () => g.destroy() });
+    this.vfx.playHeal(p);
   }
 
   castChain(s, sk) {
@@ -1848,7 +1845,6 @@ export default class GameScene extends Phaser.Scene {
         pts.push({ x: cur.fx, y: cur.sprite.y });
         const ch = this.calcCrit(s, dmg * (0.9 + Math.random() * 0.2));
         this.damageEnemy(cur, ch.dmg, { crit: ch.crit, color: ch.crit ? '#ffd030' : '#70e8ff', kx: cur.fx - lx, ky: cur.fy - ly, force: 90 });
-        this.burst(cur.fx, cur.sprite.y, 10, [0x70e8ff, 0xffffff], 140, 320);
         lx = cur.fx; ly = cur.fy;
         let next = null, nd = 240;
         for (const e of this.enemies) {
@@ -1860,22 +1856,7 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    const g = this.add.graphics().setDepth(9300);
-    for (let i = 0; i < pts.length - 1; i++) {
-      const a = pts[i], b = pts[i + 1];
-      const segs = 4;
-      const jagged = [a];
-      for (let k = 1; k < segs; k++) {
-        const t = k / segs;
-        jagged.push({ x: Phaser.Math.Linear(a.x, b.x, t) + rand(-14, 14), y: Phaser.Math.Linear(a.y, b.y, t) + rand(-14, 14) });
-      }
-      jagged.push(b);
-      g.lineStyle(6, 0x40c8ff, 0.45);
-      for (let k = 0; k < jagged.length - 1; k++) g.lineBetween(jagged[k].x, jagged[k].y, jagged[k + 1].x, jagged[k + 1].y);
-      g.lineStyle(2, 0xffffff, 1);
-      for (let k = 0; k < jagged.length - 1; k++) g.lineBetween(jagged[k].x, jagged[k].y, jagged[k + 1].x, jagged[k + 1].y);
-    }
-    this.tweens.add({ targets: g, alpha: 0, duration: 240, onComplete: () => g.destroy() });
+    this.vfx.playChainLightning(pts);
   }
 
   castFrostNova(s, sk) {
@@ -1883,9 +1864,7 @@ export default class GameScene extends Phaser.Scene {
     const R = 165;
     const dmg = Math.round((14 + s.int * 1.8 + state.level * 2) * s.spellPower * sk.powerMult);
     this.sfx('frost');
-    const ring = this.add.circle(p.fx, p.fy, 24, 0x70e8ff, 0.25).setStrokeStyle(4, 0xb0f8ff, 0.95).setDepth(9200);
-    this.tweens.add({ targets: ring, scale: R / 24, alpha: 0, duration: 420, ease: 'Cubic.Out', onComplete: () => ring.destroy() });
-    this.burst(p.fx, p.fy, 28, [0x90f8ff, 0xffffff, 0x40a0ff], 230, 460);
+    this.vfx.playFrostNova(p.fx, p.fy, R);
     this.smashPropsInRadius(p.fx, p.fy, R);
     for (const e of this.enemies.slice()) {
       if (e.dead) continue;
@@ -1911,8 +1890,10 @@ export default class GameScene extends Phaser.Scene {
     p.invuln = 280;
     this.sfx('dash');
     this.grantShadowCrit(s);
+    this.vfx.playShadowDashStart(p.fx, p.fy, ang);
 
-    p.startDash(ang, 280, 200, () => {
+    p.startDash(ang, 280, 200, (dt) => {
+      this.vfx.emitShadowTrail(p.fx, p.sprite.y, ang, dt);
       this.smashPropsInRadius(p.fx, p.fy, 36);
       for (const e of this.enemies.slice()) {
         if (e.dead || hitSet.has(e)) continue;
@@ -1920,11 +1901,13 @@ export default class GameScene extends Phaser.Scene {
           hitSet.add(e);
           const dh = this.calcCrit(s, dmg * (0.9 + Math.random() * 0.2));
           this.damageEnemy(e, dh.dmg, { crit: dh.crit, color: dh.crit ? '#ffd030' : '#d080ff', kx: Math.cos(ang), ky: Math.sin(ang), force: 180 });
+          this.vfx.playSlashImpact(e.fx, e.sprite.y, ang, 0xd080ff);
         }
       }
     });
 
-    for (let i = 0; i < 4; i++) {
+    const ghostCount = state.vfxEnabled ? 4 : 1;
+    for (let i = 0; i < ghostCount; i++) {
       this.time.delayedCall(i * 45, () => {
         if (!p.sprite.active) return;
         const g = this.add.image(p.sprite.x, p.sprite.y, 'player').setAlpha(0.5).setTint(0xb050ff).setFlipX(p.facing < 0).setDepth(p.fy - 1);
@@ -1943,25 +1926,17 @@ export default class GameScene extends Phaser.Scene {
 
     const R = 125;
     const dmg = Math.round((28 + s.int * 3.0 + state.level * 3.5) * s.spellPower * sk.powerMult);
-    const warn = this.add.circle(tx, ty, R, 0xff4010, 0.16).setStrokeStyle(3, 0xff8020, 0.9).setDepth(3);
-    const meteor = this.add.image(tx - 140, ty - 320, 'fireball').setScale(2.4).setBlendMode(Phaser.BlendModes.ADD).setDepth(9350);
-    const trail = this.add.particles(0, 0, 'spark', {
-      follow: meteor, speed: { min: 15, max: 60 }, scale: { start: 1.0, end: 0 }, lifespan: 350,
-      tint: [0xff5000, 0xffc040, 0xff2000], frequency: 16, blendMode: 'ADD',
-    }).setDepth(9340);
+    const mVis = this.vfx.createMeteorVisuals(tx, ty, R);
 
     this.tweens.add({
-      targets: meteor,
+      targets: mVis.meteor,
       x: tx,
       y: ty,
       duration: 580,
       ease: 'Quad.In',
+      onUpdate: () => this.vfx.updateMeteorTrail(mVis),
       onComplete: () => {
-        warn.destroy();
-        trail.stopFollow();
-        trail.stop();
-        meteor.destroy();
-        this.time.delayedCall(400, () => { if (trail.active) trail.destroy(); });
+        this.vfx.destroyMeteorVisuals(mVis);
         this.explosion(tx, ty, R, dmg, 'meteor');
       },
     });
@@ -1974,10 +1949,7 @@ export default class GameScene extends Phaser.Scene {
     const R = 145;
     p.startSwing(ang, 240);
     this.sfx('swing');
-    const sl = this.add.image(p.fx + Math.cos(ang) * 34, p.sprite.y + Math.sin(ang) * 34, 'slash')
-      .setRotation(ang).setScale(1.45).setTint(0xff7828).setBlendMode(Phaser.BlendModes.ADD).setDepth(9200);
-    this.tweens.add({ targets: sl, alpha: 0, scale: 1.75, duration: 240, onComplete: () => sl.destroy() });
-    this.burst(p.fx + Math.cos(ang) * 48, p.fy + Math.sin(ang) * 48, 18, [0xff7020, 0xffd060], 170, 320);
+    this.vfx.playCleave(p.fx, p.sprite.y, ang, R);
     this.smashPropsInRadius(p.fx + Math.cos(ang) * 55, p.fy + Math.sin(ang) * 55, 80);
     this.burnWebsInRadius(p.fx + Math.cos(ang) * 55, p.fy + Math.sin(ang) * 55, 80);
 
@@ -2003,17 +1975,15 @@ export default class GameScene extends Phaser.Scene {
     const ang = Math.atan2(w.y - sy, w.x - sx);
     p.startSwing(ang, 180);
     this.sfx('frost');
-    const spr = this.add.image(sx + Math.cos(ang) * 20, sy + Math.sin(ang) * 20, 'icebolt')
-      .setRotation(ang).setScale(1.75, 0.9).setBlendMode(Phaser.BlendModes.ADD);
-    const trail = this.add.particles(0, 0, 'spark', {
-      follow: spr, speed: { min: 10, max: 35 }, scale: { start: 0.65, end: 0 }, lifespan: 280,
-      tint: [0x60d8ff, 0xffffff], frequency: 22, blendMode: 'ADD',
-    }).setDepth(9200);
+    const ix = sx + Math.cos(ang) * 20, iy = sy + Math.sin(ang) * 20;
+    const vis = this.vfx.createIceLanceVisuals(ix, iy, ang);
     const dmg = Math.round((15 + s.int * 2.0 + state.level * 2) * s.spellPower * sk.powerMult);
     const hitSet = new Set();
     this.projectiles.push({
-      sprite: spr, x: spr.x, y: spr.y, vx: Math.cos(ang) * 640, vy: Math.sin(ang) * 640,
+      sprite: vis.sprite, tail: vis.tail, trailT: 0,
+      x: ix, y: iy, vx: Math.cos(ang) * 640, vy: Math.sin(ang) * 640,
       friendly: true, pierce: true, life: 1100, r: 9, light: 80,
+      onUpdate: (pr, dt) => this.vfx.updateIceLanceVisuals(pr, dt),
       onPierce: (pr, e) => {
         if (hitSet.has(e)) return;
         hitSet.add(e);
@@ -2022,13 +1992,9 @@ export default class GameScene extends Phaser.Scene {
         const chillMul = s.setEffects?.fireSplit && wasSlow ? 1.4 : 1;
         const hit = this.calcCrit(s, dmg * chillMul * (0.9 + Math.random() * 0.2));
         this.damageEnemy(e, hit.dmg, { crit: hit.crit, color: hit.crit ? '#ffd030' : '#80e8ff', kx: pr.vx, ky: pr.vy, force: 90 });
-        this.burst(e.fx, e.sprite.y, 8, [0x80e8ff, 0xffffff], 100, 260);
+        this.vfx.playIceLancePierce(e.fx, e.sprite.y, ang);
       },
-      onHit: (pr) => {
-        trail.stopFollow(); trail.stop();
-        this.time.delayedCall(350, () => { if (trail.active) trail.destroy(); });
-        this.burst(pr.x, pr.y, 10, [0x70d8ff, 0xffffff], 120, 280);
-      },
+      onHit: (pr) => this.vfx.playIceLanceEnd(pr.x, pr.y),
     });
   }
 
@@ -2042,9 +2008,8 @@ export default class GameScene extends Phaser.Scene {
     this.sfx('poison');
     const R = 120;
     const dmg = Math.round((8 + s.int * 1.1 + state.level * 1.3) * s.spellPower * sk.powerMult);
-    const cloud = this.add.circle(tx, ty, R, 0x50d028, 0.20).setStrokeStyle(2, 0x90ff50, 0.65).setDepth(3);
-    const inner = this.add.image(tx, ty, 'glow').setTint(0x60e830).setBlendMode(Phaser.BlendModes.ADD).setScale(1.8).setAlpha(0.42).setDepth(3);
-    this.groundEffects.push({ x: tx, y: ty, r: R, t: 0, tickT: 500, dur: 4500, dmg, visuals: [cloud, inner] });
+    const pVis = this.vfx.createPoisonCloudVisuals(tx, ty, R);
+    this.groundEffects.push({ x: tx, y: ty, r: R, t: 0, tickT: 500, dur: 4500, dmg, visuals: pVis.visuals, vortex: pVis.vortex, vfxT: 0 });
   }
 
   castHolyShield(s, sk) {
@@ -2055,7 +2020,7 @@ export default class GameScene extends Phaser.Scene {
     state.buffs.shield = 8000;
     this.sfx('shield');
     this.floatText(p.fx, p.sprite.y - 36, `聖光護盾 +${amount}`, '#ffe070', 20);
-    this.burst(p.fx, p.sprite.y, 24, [0xffe060, 0xffffff], 150, 420);
+    this.vfx.playHolyShieldCast(p);
   }
 
   castBloodBoil(s, sk) {
@@ -2063,7 +2028,7 @@ export default class GameScene extends Phaser.Scene {
     state.buffs.bloodBoil = Math.round(7000 * (1 + (sk.level - 1) * 0.03));
     this.sfx('shrine');
     this.floatText(p.fx, p.sprite.y - 36, '鮮血狂怒！', '#ff5870', 22);
-    this.burst(p.fx, p.sprite.y, 28, [0xff2040, 0xff90a0], 170, 460);
+    this.vfx.playBloodBoilCast(p);
   }
 
   castArcaneOrb(s, sk) {
@@ -2073,37 +2038,32 @@ export default class GameScene extends Phaser.Scene {
     const ang = Math.atan2(w.y - sy, w.x - sx);
     p.startSwing(ang, 200);
     this.sfx('nova');
-    const spr = this.add.image(sx + Math.cos(ang) * 22, sy + Math.sin(ang) * 22, 'orb')
-      .setScale(1.6).setBlendMode(Phaser.BlendModes.ADD);
+    const ox = sx + Math.cos(ang) * 22, oy = sy + Math.sin(ang) * 22;
+    const vis = this.vfx.createArcaneOrbVisuals(ox, oy);
     const dmg = Math.round((10 + s.int * 1.3 + state.level * 1.5) * s.spellPower * sk.powerMult);
     this.projectiles.push({
-      sprite: spr, x: spr.x, y: spr.y, vx: Math.cos(ang) * 180, vy: Math.sin(ang) * 180,
+      sprite: vis.sprite, halo: vis.halo, trailT: 0,
+      x: ox, y: oy, vx: Math.cos(ang) * 180, vy: Math.sin(ang) * 180,
       friendly: true, pierce: true, life: 2600, r: 14, light: 120, zapT: 0,
       onUpdate: (pr, dt) => {
-        pr.sprite.setScale(1.5 + Math.sin(this.time.now * 0.015) * 0.18);
+        this.vfx.updateArcaneOrbVisuals(pr, dt);
         pr.zapT -= dt;
         if (pr.zapT <= 0) {
           pr.zapT = 280;
-          let hits = 0;
-          const g = this.add.graphics().setDepth(9300);
-          g.lineStyle(2.5, 0xd080ff, 0.9);
+          const zapped = [];
           for (const e of this.enemies.slice()) {
-            if (e.dead || hits >= 3) continue;
+            if (e.dead || zapped.length >= 3) continue;
             if (Math.hypot(e.fx - pr.x, e.fy - pr.y) <= 135 + e.T.r) {
-              hits++;
-              g.lineBetween(pr.x, pr.y, e.fx, e.sprite.y);
+              zapped.push({ x: e.fx, y: e.sprite.y });
               const hit = this.calcCrit(s, dmg);
               this.damageEnemy(e, hit.dmg, { crit: hit.crit, color: hit.crit ? '#ffd030' : '#d080ff', isProc: true });
             }
           }
-          if (hits > 0) this.tweens.add({ targets: g, alpha: 0, duration: 160, onComplete: () => g.destroy() });
-          else g.destroy();
+          if (zapped.length) this.vfx.playArcaneZap(pr.x, pr.y, zapped);
         }
       },
       onHit: (pr) => {
-        const c = this.add.image(pr.x, pr.y, 'glow').setTint(0xb868ff).setBlendMode(Phaser.BlendModes.ADD).setScale(0.3).setDepth(9200);
-        this.tweens.add({ targets: c, scale: 1.6, alpha: 0, duration: 320, onComplete: () => c.destroy() });
-        this.burst(pr.x, pr.y, 24, [0xb868ff, 0xffffff], 180, 400);
+        this.vfx.playArcaneOrbDetonate(pr.x, pr.y, 85);
         for (const e of this.enemies.slice()) {
           if (e.dead) continue;
           if (Math.hypot(e.fx - pr.x, e.fy - pr.y) <= 85 + e.T.r) {
@@ -2131,13 +2091,10 @@ export default class GameScene extends Phaser.Scene {
     }
     this.sfx('blink');
     this.grantShadowCrit(s);
-    this.burst(ox, oy - 8, 16, [0x9040ff, 0x301060], 130, 320);
     p.stop();
     p.sprite.setPosition(bx, by - 12);
     p.invuln = 220;
-    this.burst(bx, by - 8, 24, [0xc070ff, 0xffffff], 170, 380);
-    const ring = this.add.circle(bx, by, 20, 0x8030ff, 0.22).setStrokeStyle(3, 0xd088ff, 0.9).setDepth(9200);
-    this.tweens.add({ targets: ring, scale: 95 / 20, alpha: 0, duration: 320, onComplete: () => ring.destroy() });
+    this.vfx.playBlink(ox, oy, bx, by, 95, p.facing < 0);
     this.smashPropsInRadius(bx, by, 75);
     const dmg = Math.round((15 + s.int * 1.7 + state.level * 2) * s.spellPower * sk.powerMult);
     for (const e of this.enemies.slice()) {
@@ -2166,13 +2123,7 @@ export default class GameScene extends Phaser.Scene {
           tx = pick.fx; ty = pick.fy;
         }
         this.sfx('lightning');
-        const g = this.add.graphics().setDepth(9350);
-        g.lineStyle(7, 0xffe848, 0.5).lineBetween(tx + rand(-18, 18), ty - 240, tx, ty);
-        g.lineStyle(2.5, 0xffffff, 1).lineBetween(tx + rand(-10, 10), ty - 240, tx, ty);
-        this.tweens.add({ targets: g, alpha: 0, duration: 220, onComplete: () => g.destroy() });
-        const ring = this.add.circle(tx, ty, 18, 0xffe848, 0.25).setStrokeStyle(2, 0xffffff, 0.9).setDepth(3);
-        this.tweens.add({ targets: ring, scale: 70 / 18, alpha: 0, duration: 260, onComplete: () => ring.destroy() });
-        this.burst(tx, ty, 14, [0xffe848, 0xffffff], 150, 300);
+        this.vfx.playThunderBolt(tx, ty, 70);
         this.smashPropsInRadius(tx, ty, 50);
         for (const e of this.enemies.slice()) {
           if (e.dead) continue;
@@ -2188,6 +2139,7 @@ export default class GameScene extends Phaser.Scene {
   castBladeStorm(s, sk) {
     for (const old of this.orbitBlades) {
       old.blades.forEach((b) => b.destroy());
+      if (old.orbitRing && old.orbitRing.active) old.orbitRing.destroy();
     }
     this.orbitBlades = [];
     const blades = [];
@@ -2195,8 +2147,9 @@ export default class GameScene extends Phaser.Scene {
       blades.push(this.add.image(this.player.fx, this.player.fy, 'sword').setOrigin(0.5, 0.85).setScale(1.1).setTint(0xc8f0ff).setDepth(9200));
     }
     this.sfx('whirl');
+    const bVis = this.vfx.createBladeStormVisuals(this.player.fx, this.player.fy, 85);
     const dmg = Math.round((8 + s.attack * 0.72) * sk.powerMult);
-    this.orbitBlades.push({ t: 0, dur: 5500, r: 85, dmg, hitCd: new Map(), blades });
+    this.orbitBlades.push({ t: 0, dur: 5500, r: 85, dmg, hitCd: new Map(), blades, orbitRing: bVis.orbitRing, sparkT: 0 });
   }
 
   castSoulNova(s, sk) {
@@ -2204,21 +2157,21 @@ export default class GameScene extends Phaser.Scene {
     const R = 185;
     const dmg = Math.round((18 + s.int * 2.0 + state.level * 2.2) * s.spellPower * sk.powerMult);
     this.sfx('soul');
-    const ring = this.add.circle(p.fx, p.fy, 24, 0xc82068, 0.26).setStrokeStyle(4, 0xff70b8, 0.95).setDepth(9200);
-    this.tweens.add({ targets: ring, scale: R / 24, alpha: 0, duration: 450, ease: 'Cubic.Out', onComplete: () => ring.destroy() });
-    this.burst(p.fx, p.fy, 32, [0xe050a0, 0xffa0d0, 0xffffff], 230, 480);
     this.smashPropsInRadius(p.fx, p.fy, R);
     let total = 0;
+    const struckEnemies = [];
     for (const e of this.enemies.slice()) {
       if (e.dead) continue;
       if (Math.hypot(e.fx - p.fx, e.fy - p.fy) <= R + e.T.r) {
         e.plagueUntil = this.time.now + 5500;
         const hit = this.calcCrit(s, dmg * (0.9 + Math.random() * 0.2));
         total += hit.dmg;
+        struckEnemies.push(e);
         this.damageEnemy(e, hit.dmg, { crit: hit.crit, color: hit.crit ? '#ffd030' : '#ff80c0', kx: e.fx - p.fx, ky: e.fy - p.fy, force: 140 });
       }
     }
     const heal = Math.round(total * 0.25);
+    this.vfx.playSoulNova(p, R, struckEnemies, heal);
     if (heal > 0 && !p.dead) {
       state.hp = Math.min(s.maxHp, state.hp + heal);
       this.floatText(p.fx, p.sprite.y - 36, `+${heal} 魂癒`, '#ff80b8', 18);
@@ -2480,6 +2433,7 @@ export default class GameScene extends Phaser.Scene {
     pr.dead = true;
     if (pr.sprite && pr.sprite.active) pr.sprite.destroy();
     if (pr.tail && pr.tail.active) pr.tail.destroy();
+    if (pr.halo && pr.halo.active) pr.halo.destroy();
     if (pr.glow && pr.glow.active) pr.glow.destroy();
     const idx = this.projectiles.indexOf(pr);
     if (idx !== -1) this.projectiles.splice(idx, 1);
@@ -2744,7 +2698,10 @@ export default class GameScene extends Phaser.Scene {
     if (state.buffs) {
       if (state.buffs.frenzy > 0) state.buffs.frenzy = Math.max(0, state.buffs.frenzy - dt);
       if (state.buffs.arcane > 0) state.buffs.arcane = Math.max(0, state.buffs.arcane - dt);
-      if (state.buffs.bloodBoil > 0) state.buffs.bloodBoil = Math.max(0, state.buffs.bloodBoil - dt);
+      if (state.buffs.bloodBoil > 0) {
+        state.buffs.bloodBoil = Math.max(0, state.buffs.bloodBoil - dt);
+        if (!p.dead) this.vfx.emitBloodBoilTick(p, dt);
+      }
       if (state.buffs.shadowCrit > 0) state.buffs.shadowCrit = Math.max(0, state.buffs.shadowCrit - dt);
       if (state.buffs.shield > 0) {
         state.buffs.shield = Math.max(0, state.buffs.shield - dt);
@@ -2858,6 +2815,7 @@ export default class GameScene extends Phaser.Scene {
       const ge = this.groundEffects[i];
       ge.t += dt;
       ge.tickT -= dt;
+      this.vfx.updatePoisonCloudVisuals(ge, dt);
       if (ge.tickT <= 0) {
         ge.tickT = 500;
         for (const e of this.enemies.slice()) {
@@ -2885,6 +2843,7 @@ export default class GameScene extends Phaser.Scene {
       ob.t += dt;
       if (p.dead || ob.t >= ob.dur) {
         ob.blades.forEach((b) => b.destroy());
+        if (ob.orbitRing && ob.orbitRing.active) ob.orbitRing.destroy();
         this.orbitBlades.splice(i, 1);
         continue;
       }
@@ -2895,6 +2854,7 @@ export default class GameScene extends Phaser.Scene {
         const by = p.sprite.y + Math.sin(a) * ob.r * 0.72;
         b.setPosition(bx, by).setRotation(a + Math.PI / 2).setDepth(by + 20);
       });
+      this.vfx.updateBladeStormVisuals(ob, p, time, dt);
       this.smashPropsInRadius(p.fx, p.fy, ob.r + 12);
       for (const e of this.enemies.slice()) {
         if (e.dead) continue;
@@ -2903,6 +2863,7 @@ export default class GameScene extends Phaser.Scene {
             ob.hitCd.set(e, time + 380);
             const hit = this.calcCrit(s, ob.dmg * (0.9 + Math.random() * 0.2), false);
             this.damageEnemy(e, hit.dmg, { crit: hit.crit, color: hit.crit ? '#ffd030' : '#c0f0ff', isProc: true });
+            this.vfx.playSlashImpact(e.fx, e.sprite.y, Math.atan2(e.fy - p.fy, e.fx - p.fx), 0x90f0ff);
           }
         }
       }
@@ -2915,9 +2876,20 @@ export default class GameScene extends Phaser.Scene {
     const p = this.player;
     if (p.dead || state.shield <= 0) return;
     const pulse = 0.7 + Math.sin(time * 0.01) * 0.2;
-    g.fillStyle(0xffe060, 0.14);
+    g.fillStyle(0xffe060, state.vfxEnabled ? 0.12 : 0.14);
     g.fillEllipse(p.fx, p.sprite.y + 4, 48, 56);
     g.lineStyle(2.5, 0xffe870, pulse);
     g.strokeEllipse(p.fx, p.sprite.y + 4, 48, 56);
+    if (state.vfxEnabled) {
+      g.lineStyle(1.4, 0xfff8c8, pulse * 0.7);
+      g.strokeEllipse(p.fx, p.sprite.y + 4, 54, 62);
+      for (let i = 0; i < 3; i++) {
+        const a = time * 0.004 + (i * Math.PI * 2) / 3;
+        const gx = p.fx + Math.cos(a) * 26;
+        const gy = p.sprite.y + 4 + Math.sin(a) * 30;
+        g.fillStyle(0xfff8d0, 0.9);
+        g.fillCircle(gx, gy, 2.5);
+      }
+    }
   }
 }

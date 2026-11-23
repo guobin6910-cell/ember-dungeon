@@ -1334,6 +1334,106 @@ export function generateTextures(scene) {
     }
   });
 
+  // 全技能通用可染色輕量特效貼圖（旋風氣流圈、垂直光柱、塵霧、冰晶微粒、符文魔法陣）
+  canvasTex(scene, 'vfx_vortex_ring', 128, 128, (ctx) => {
+    ctx.translate(64, 64);
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 4; i++) {
+      const base = (i * Math.PI) / 2;
+      for (let s = 0; s < 14; s++) {
+        const t0 = s / 14, t1 = (s + 1) / 14;
+        const a0 = base + t0 * 1.18;
+        const a1 = base + t1 * 1.18;
+        const r0 = 36 + t0 * 21;
+        const r1 = 36 + t1 * 21;
+        const alpha = Math.sin(t0 * Math.PI) * 0.85;
+        ctx.strokeStyle = `rgba(255,255,255,${alpha.toFixed(3)})`;
+        ctx.lineWidth = 1.6 + Math.sin(t0 * Math.PI) * 4.2;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a0) * r0, Math.sin(a0) * r0);
+        ctx.lineTo(Math.cos(a1) * r1, Math.sin(a1) * r1);
+        ctx.stroke();
+      }
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, 56, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+
+  canvasTex(scene, 'vfx_light_pillar', 64, 140, (ctx) => {
+    for (let y = 0; y < 140; y++) {
+      const vFade = y < 110
+        ? Math.pow(y / 110, 1.4)
+        : Math.max(0, 1 - (y - 110) / 30);
+      const hg = ctx.createLinearGradient(0, y, 64, y);
+      hg.addColorStop(0, 'rgba(255,255,255,0)');
+      hg.addColorStop(0.28, `rgba(255,255,255,${(0.28 * vFade).toFixed(3)})`);
+      hg.addColorStop(0.5, `rgba(255,255,255,${(0.95 * vFade).toFixed(3)})`);
+      hg.addColorStop(0.72, `rgba(255,255,255,${(0.28 * vFade).toFixed(3)})`);
+      hg.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = hg;
+      ctx.fillRect(0, y, 64, 1);
+    }
+  });
+
+  canvasTex(scene, 'vfx_dust_puff', 20, 20, (ctx) => {
+    const g = ctx.createRadialGradient(10, 10, 1, 10, 10, 9.5);
+    g.addColorStop(0, 'rgba(255,255,255,0.85)');
+    g.addColorStop(0.55, 'rgba(255,255,255,0.42)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 20, 20);
+  });
+
+  canvasTex(scene, 'vfx_frost_shard', 16, 16, (ctx) => {
+    ctx.translate(8, 8);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 7);
+    g.addColorStop(0, 'rgba(255,255,255,0.95)');
+    g.addColorStop(0.5, 'rgba(255,255,255,0.4)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(-7, -7, 14, 14);
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(0, -7);
+    ctx.lineTo(3.5, 0);
+    ctx.lineTo(0, 7);
+    ctx.lineTo(-3.5, 0);
+    ctx.closePath();
+    ctx.fill();
+  });
+
+  canvasTex(scene, 'vfx_rune_ring', 128, 128, (ctx) => {
+    ctx.translate(64, 64);
+    ctx.strokeStyle = 'rgba(255,255,255,0.88)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 55, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.arc(0, 0, 44, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.82)';
+    ctx.lineWidth = 1.8;
+    for (let i = 0; i < 8; i++) {
+      const a = (i * Math.PI) / 4;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * 44, Math.sin(a) * 44);
+      ctx.lineTo(Math.cos(a) * 55, Math.sin(a) * 55);
+      ctx.stroke();
+      const ma = a + Math.PI / 8;
+      ctx.beginPath();
+      ctx.arc(0, 0, 49.5, ma - 0.08, ma + 0.08);
+      ctx.stroke();
+    }
+  });
+
   // 揮砍弧光
   canvasTex(scene, 'slash', 128, 128, (ctx) => {
     ctx.translate(64, 64);
