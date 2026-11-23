@@ -140,7 +140,10 @@ if (!gotSingleInstanceLock) {
         const data = await fs.promises.readFile(filePath);
         return new Response(data, {
           status: 200,
-          headers: { 'Content-Type': getMimeType(filePath) },
+          headers: {
+            'Content-Type': getMimeType(filePath),
+            'Access-Control-Allow-Origin': '*',
+          },
         });
       } catch (err) {
         if (err && (err.code === 'ENOENT' || err.code === 'EISDIR' || err.code === 'ENOTDIR')) {

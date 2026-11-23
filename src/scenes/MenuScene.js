@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { txt, SERIF } from '../ui.js';
 import { Sfx } from '../systems/audio.js';
-import { TILE } from '../systems/textures.js';
+import { preloadDungeonArt, hasBackdropArt, fitCoverSprite, ART_KEYS } from '../systems/dungeonArt.js';
 import { getSaveMeta, loadGame, saveGame, clearSave } from '../systems/save.js';
 import { DIFFICULTY_LIST, DEFAULT_DIFFICULTY, getDifficulty } from '../systems/difficulty.js';
 import { state, setDifficulty, loadTouchPref, loadVfxPref, setVfxEnabled } from '../state.js';
@@ -28,23 +28,44 @@ export default class MenuScene extends Phaser.Scene {
     this.starting = false;
     state.touchMode = loadTouchPref();
     state.vfxEnabled = loadVfxPref();
-    this.cameras.main.setBackgroundColor('#050304');
+    this.cameras.main.setBackgroundColor('#080506');
+    preloadDungeonArt(this.game);
 
-    // 背景磚牆
-    for (let y = 0; y < H; y += TILE) for (let x = 0; x < W; x += TILE) {
-      const t = this.add.image(x, y, 'tiles').setOrigin(0).setCrop(5 * TILE, 0, TILE, TILE);
-      t.x -= 5 * TILE;
-      t.setAlpha(0.35);
+    // 地城走廊氛圍背景圖（等比 Cover 不變形；若尚未載入完成則於背景無縫淡入）
+    this.backdrop = null;
+    const attachBackdrop = (fade = false) => {
+      if (this.backdrop || !hasBackdropArt(this.game) || !this.sys || this.sys.settings.status >= Phaser.Scenes.SHUTDOWN) return;
+      const img = this.add.image(W / 2, H / 2, ART_KEYS.BACKDROP).setDepth(-10);
+      fitCoverSprite(img, W, H);
+      this.backdrop = img;
+      if (fade) {
+        img.setAlpha(0);
+        this.tweens.add({ targets: img, alpha: 1, duration: 320, ease: 'Quad.Out' });
+      }
+    };
+    this._onBackdropReady = () => attachBackdrop(true);
+    if (hasBackdropArt(this.game)) {
+      attachBackdrop(false);
+    } else {
+      this.game.events.once(`dungeonArtLoaded:${ART_KEYS.BACKDROP}`, this._onBackdropReady);
     }
-    this.add.image(W / 2, H / 2, 'vignette').setScale(1.1);
-    this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.45);
+    this.events.once('shutdown', () => {
+      this.game.events.off(`dungeonArtLoaded:${ART_KEYS.BACKDROP}`, this._onBackdropReady);
+    });
 
-    // 火炬
+    this.add.image(W / 2, H / 2, 'vignette').setScale(1.1).setDepth(-5);
+    this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.34).setDepth(-4);
+
+    // 貼合背景走廊火炬位置的微弱呼吸火光
     this.torches = [];
-    [[200, 240], [W - 200, 240]].forEach(([x, y]) => {
-      const glow = this.add.image(x, y - 10, 'glow').setScale(3.2).setTint(0xff7020).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.55);
-      const t = this.add.image(x, y, 'torch0').setScale(1.6);
-      this.torches.push({ t, glow });
+    [[252, 248, 2.1], [804, 352, 1.35]].forEach(([x, y, sc]) => {
+      const glow = this.add.image(x, y, 'glow')
+        .setScale(sc)
+        .setTint(0xff7828)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setAlpha(0.45)
+        .setDepth(-3);
+      this.torches.push({ glow });
     });
 
     // 餘燼粒子
@@ -221,8 +242,12 @@ export default class MenuScene extends Phaser.Scene {
 
   update(time) {
     this.torches.forEach((o, i) => {
-      o.t.setTexture('torch' + (Math.floor(time / 120 + i) % 3));
-      o.glow.setAlpha(0.45 + Math.sin(time * 0.013 + i) * 0.08 + Math.random() * 0.05);
+      if (!o.glow || !o.glow.active) return;
+      if (!state.vfxEnabled) {
+        o.glow.setAlpha(0.14);
+        return;
+      }
+      o.glow.setAlpha(0.38 + Math.sin(time * 0.013 + i) * 0.08 + Math.random() * 0.04);
     });
   }
 }

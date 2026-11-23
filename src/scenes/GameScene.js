@@ -10,6 +10,9 @@ import {
   state, resetState, getStats, getEffectiveSkillLevel, addXp, INV_SIZE, setVfxEnabled,
 } from '../state.js';
 import { VfxManager } from '../systems/vfx.js';
+import {
+  preloadDungeonArt, isDungeonArtReady, ensureDungeonArtTextures, ART_KEYS,
+} from '../systems/dungeonArt.js';
 import { FONT, QUALITY_COLORS, QUALITY_HEX } from '../ui.js';
 import { generateItem, generateSetItem, generateSkillBook, itemDisplayName } from '../systems/items.js';
 import { getBossSetId } from '../systems/sets.js';
@@ -90,10 +93,29 @@ export default class GameScene extends Phaser.Scene {
     this.dungeon = this.mode === 'village' ? generateVillage() : generateDungeon(this.floor);
     const biome = this.dungeon.biome;
     this.pf = new PathFinder(this.dungeon);
-    const map = this.make.tilemap({ data: this.dungeon.tiles, tileWidth: TILE, tileHeight: TILE });
-    const ts = map.addTilesetImage(biome.tiles, biome.tiles, TILE, TILE, 0, 0);
-    this.layer = map.createLayer(0, ts, 0, 0).setDepth(0);
-    this.layer.setCollision([0, 4, 5]);
+    this.map = null;
+    this.layer = null;
+    this.playerWallCollider = null;
+    this.enemyWallCollider = null;
+    this.floorBg = null;
+    this.wallSprites = [];
+    this._dungeonArtApplied = false;
+    this._onDungeonArtReady = null;
+
+    if (this.mode === 'dungeon') {
+      preloadDungeonArt(this.game);
+      if (isDungeonArtReady(this.game)) {
+        this.applyDungeonArt();
+      } else {
+        this.buildDungeonMapLayer(biome.tiles);
+        this._onDungeonArtReady = () => {
+          if (this.sys && this.sys.settings.status < Phaser.Scenes.SHUTDOWN) this.applyDungeonArt();
+        };
+        this.game.events.once('dungeonArtReady', this._onDungeonArtReady);
+      }
+    } else {
+      this.buildDungeonMapLayer(biome.tiles);
+    }
     this.worldW = this.dungeon.W * TILE;
     this.worldH = this.dungeon.H * TILE;
     this.physics.world.setBounds(0, 0, this.worldW, this.worldH);
@@ -114,12 +136,11 @@ export default class GameScene extends Phaser.Scene {
     }
     this.player = new Player(this, sx, sy);
     this.player.onStuck = (dest) => this.repathStrict(dest);
-    this.physics.add.collider(this.player.sprite, this.layer);
 
     // ---- 敵人與場景佈置
     this.enemies = [];
     this.enemyGroup = this.physics.add.group();
-    this.physics.add.collider(this.enemyGroup, this.layer);
+    this.bindWallColliders();
     this.physics.add.collider(this.enemyGroup, this.enemyGroup);
 
     if (this.mode === 'village') {
@@ -168,6 +189,10 @@ export default class GameScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       this.scene.stop('UI');
       Sfx.stopAmbient();
+      if (this._onDungeonArtReady) {
+        this.game.events.off('dungeonArtReady', this._onDungeonArtReady);
+        this._onDungeonArtReady = null;
+      }
       if (this.whirl) {
         this.vfx?.destroyWhirlVisuals(this.whirl);
         this.whirl = null;
@@ -2525,6 +2550,70 @@ export default class GameScene extends Phaser.Scene {
   sfx(name) { Sfx.play(name); }
   msg(text, color = '#e0d0b0') { this.game.events.emit('msg', text, color); }
 
+  buildDungeonMapLayer(tilesetKey) {
+    if (this.layer && this.layer.active) this.layer.destroy();
+    if (this.map) this.map.destroy();
+    this.map = this.make.tilemap({ data: this.dungeon.tiles, tileWidth: TILE, tileHeight: TILE });
+    const ts = this.map.addTilesetImage(tilesetKey, tilesetKey, TILE, TILE, 0, 0);
+    this.layer = this.map.createLayer(0, ts, 0, 0).setDepth(0);
+    this.layer.setCollision([0, 4, 5]);
+  }
+
+  bindWallColliders() {
+    if (this.playerWallCollider) {
+      this.physics.world.removeCollider(this.playerWallCollider);
+      this.playerWallCollider = null;
+    }
+    if (this.enemyWallCollider) {
+      this.physics.world.removeCollider(this.enemyWallCollider);
+      this.enemyWallCollider = null;
+    }
+    if (this.player?.sprite && this.layer) {
+      this.playerWallCollider = this.physics.add.collider(this.player.sprite, this.layer);
+    }
+    if (this.enemyGroup && this.layer) {
+      this.enemyWallCollider = this.physics.add.collider(this.enemyGroup, this.layer);
+    }
+  }
+
+  applyDungeonArt() {
+    if (this.mode !== 'dungeon' || this._dungeonArtApplied || !isDungeonArtReady(this.game)) return;
+    this._dungeonArtApplied = true;
+    const { maskKey, style } = ensureDungeonArtTextures(this, this.dungeon.biome);
+
+    this.floorBg = this.add.tileSprite(0, 0, VW, VH, ART_KEYS.FLOOR_TILE)
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setDepth(-1)
+      .setTint(style.floorTint);
+
+    this.buildDungeonMapLayer(maskKey);
+
+    this.wallSprites = [];
+    const d = this.dungeon;
+    for (let y = 0; y < d.H; y++) {
+      for (let x = 0; x < d.W; x++) {
+        if (d.tiles[y][x] !== 5) continue;
+        const isTall = !d.isFloor(x, y - 1);
+        const frame = isTall ? `w${x % 3}` : 'pillar';
+        const ws = this.add.image(x * TILE, (y + 1) * TILE, ART_KEYS.WALL_ATLAS, frame)
+          .setOrigin(0, 1)
+          .setDepth(0.5)
+          .setTint(style.wallTint);
+        this.wallSprites.push(ws);
+      }
+    }
+
+    if (this.player && this.enemyGroup) {
+      this.bindWallColliders();
+    }
+    const cam = this.cameras.main;
+    if (cam) {
+      this.floorBg.tilePositionX = cam.scrollX;
+      this.floorBg.tilePositionY = cam.scrollY;
+    }
+  }
+
   // =========================================================== 更新
   updateCamera(dt) {
     const cam = this.cameras.main;
@@ -2540,6 +2629,10 @@ export default class GameScene extends Phaser.Scene {
     this.camX = Phaser.Math.Clamp(this.camX, minCx, maxCx);
     this.camY = Phaser.Math.Clamp(this.camY, minCy, maxCy);
     cam.setScroll(Math.round(this.camX), Math.round(this.camY));
+    if (this.floorBg && this.floorBg.active) {
+      this.floorBg.tilePositionX = cam.scrollX;
+      this.floorBg.tilePositionY = cam.scrollY;
+    }
   }
 
   updateLighting(time) {
