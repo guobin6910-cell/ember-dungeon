@@ -67,7 +67,7 @@ export default class Player {
     this.sprite.setPosition(gx, gy - this.foot);
     this.syncBody();
     this.shadow.setScale(0.95, 0.36);
-    this.sword.setScale(1.15);
+    this.sword.setVisible(false);
     return true;
   }
 
@@ -131,6 +131,9 @@ export default class Player {
     const sp = dist / (dur / 1000);
     this.dodge = { t: 0, dur, vx: Math.cos(angle) * sp, vy: Math.sin(angle) * sp, angle };
     this.dash = null;
+    this.swing = null;
+    this.sprite.setScale(1, 1);
+    this.sprite.setAngle(0);
     this.facing = Math.cos(angle) >= 0 ? 1 : -1;
     this.path = [];
   }
@@ -139,6 +142,9 @@ export default class Player {
     const sp = dist / (dur / 1000);
     this.dash = { t: 0, dur, vx: Math.cos(angle) * sp, vy: Math.sin(angle) * sp, angle, onTick };
     this.dodge = null;
+    this.swing = null;
+    this.sprite.setScale(1, 1);
+    this.sprite.setAngle(0);
     this.facing = Math.cos(angle) >= 0 ? 1 : -1;
     this.path = [];
   }
@@ -265,31 +271,59 @@ export default class Player {
     const moving = body.velocity.length() > 5 && !this.dodge && !this.dash;
     const tiltAmp = this.usesCustomArt ? 4.5 : 7;
     if (this.swing && !this.dodge && this.usesCustomArt) {
-      const sp = Math.min(1, this.swing.t / this.swing.dur);
-      s.setAngle(this.facing * Math.sin(sp * Math.PI) * 9);
-    } else if (moving) {
-      this.walkT += dt;
-      s.setAngle(Math.sin(this.walkT * 0.018) * tiltAmp);
-    } else if (!this.dodge) {
-      this.walkT = 0;
-      s.setAngle(s.angle * 0.8);
+      const sp = Math.min(1, (this.swing.t + dt) / this.swing.dur);
+      let angle, sx, sy;
+      if (sp < 0.22) {
+        const u = sp / 0.22;
+        angle = -this.facing * 10 * u;
+        sx = 1 - 0.06 * u;
+        sy = 1 + 0.05 * u;
+      } else if (sp < 0.55) {
+        const u = Phaser.Math.Easing.Cubic.Out((sp - 0.22) / 0.33);
+        angle = this.facing * (-10 + 28 * u);
+        sx = 0.94 + 0.20 * u;
+        sy = 1.05 - 0.12 * u;
+      } else {
+        const u = Phaser.Math.Easing.Quadratic.Out((sp - 0.55) / 0.45);
+        angle = this.facing * 18 * (1 - u);
+        sx = 1.14 - 0.14 * u;
+        sy = 0.93 + 0.07 * u;
+      }
+      s.setAngle(angle);
+      s.setScale(sx, sy);
+    } else if (!this.dodge && !this.scene?.whirl) {
+      if (moving) {
+        this.walkT += dt;
+        s.setAngle(Math.sin(this.walkT * 0.018) * tiltAmp);
+      } else {
+        this.walkT = 0;
+        s.setAngle(s.angle * 0.8);
+      }
     }
     s.setFlipX(this.facing < 0);
     s.setDepth(this.fy);
     this.shadow.setPosition(this.fx, this.fy + 1).setDepth(2);
 
-    // 劍
-    const hx = s.x + this.facing * (this.usesCustomArt ? 14 : 11), hy = s.y + 6;
-    const showSword = !this.dodge && !this.dead && (!this.usesCustomArt || !!this.swing || !!this.scene?.whirl);
+    // 劍（僅未套用原始戰士圖時顯示像素劍；主角新圖完全由本體揮刀演出）
+    const hx = s.x + this.facing * 11, hy = s.y + 6;
+    const showSword = !this.usesCustomArt && !this.dodge && !this.dead;
     this.sword.setPosition(hx, hy).setDepth(this.fy + 1).setVisible(showSword);
     if (this.swing) {
       this.swing.t += dt;
       const p = Math.min(1, this.swing.t / this.swing.dur);
-      const e = Phaser.Math.Easing.Cubic.Out(p);
-      const a = this.swing.angle + Math.PI / 2 + (-1.6 + e * 3.2) * this.facing;
-      this.sword.setRotation(a);
-      if (p >= 1) this.swing = null;
-    } else {
+      if (!this.usesCustomArt) {
+        const e = Phaser.Math.Easing.Cubic.Out(p);
+        const a = this.swing.angle + Math.PI / 2 + (-1.6 + e * 3.2) * this.facing;
+        this.sword.setRotation(a);
+      }
+      if (p >= 1) {
+        this.swing = null;
+        if (!this.dodge) {
+          s.setScale(1, 1);
+          if (this.usesCustomArt) s.setAngle(0);
+        }
+      }
+    } else if (!this.usesCustomArt) {
       this.sword.setRotation(this.facing * 0.5 + (moving ? Math.sin(this.walkT * 0.018) * 0.15 : 0));
     }
   }

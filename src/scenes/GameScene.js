@@ -1445,10 +1445,13 @@ export default class GameScene extends Phaser.Scene {
       p.startSwing(ang);
       p.attackCd = Math.max(200, Math.round(520 / (1 + s0.atkSpeed)));
       this.sfx('swing');
-      const sx = p.fx + Math.cos(ang) * 22, sy = p.sprite.y + Math.sin(ang) * 22;
-      const sl = this.add.image(sx, sy, 'slash').setRotation(ang).setScale(0.55).setTint(0xffe0b0)
+      const reach = p.usesCustomArt ? 28 : 22;
+      const startScale = p.usesCustomArt ? 0.72 : 0.55;
+      const endScale = p.usesCustomArt ? 0.9 : 0.7;
+      const sx = p.fx + Math.cos(ang) * reach, sy = p.sprite.y + Math.sin(ang) * reach;
+      const sl = this.add.image(sx, sy, 'slash').setRotation(ang).setScale(startScale).setTint(0xffe0b0)
         .setBlendMode(Phaser.BlendModes.ADD).setDepth(p.fy + 2).setAlpha(0.9);
-      this.tweens.add({ targets: sl, alpha: 0, scale: 0.7, duration: 200, onComplete: () => sl.destroy() });
+      this.tweens.add({ targets: sl, alpha: 0, scale: endScale, duration: 200, onComplete: () => sl.destroy() });
       this.smashPropsInRadius(sx, p.fy + Math.sin(ang) * 20, 42);
     }
   }
@@ -1459,10 +1462,13 @@ export default class GameScene extends Phaser.Scene {
     p.startSwing(ang);
     p.attackCd = Math.max(200, Math.round(520 / (1 + s0.atkSpeed)));
     this.sfx('swing');
-    const sx = p.fx + Math.cos(ang) * 22, sy = p.sprite.y + Math.sin(ang) * 22;
-    const sl = this.add.image(sx, sy, 'slash').setRotation(ang).setScale(0.55).setTint(0xffe0b0)
+    const reach = p.usesCustomArt ? 28 : 22;
+    const startScale = p.usesCustomArt ? 0.72 : 0.55;
+    const endScale = p.usesCustomArt ? 0.9 : 0.7;
+    const sx = p.fx + Math.cos(ang) * reach, sy = p.sprite.y + Math.sin(ang) * reach;
+    const sl = this.add.image(sx, sy, 'slash').setRotation(ang).setScale(startScale).setTint(0xffe0b0)
       .setBlendMode(Phaser.BlendModes.ADD).setDepth(p.fy + 2).setAlpha(0.9);
-    this.tweens.add({ targets: sl, alpha: 0, scale: 0.7, duration: 200, onComplete: () => sl.destroy() });
+    this.tweens.add({ targets: sl, alpha: 0, scale: endScale, duration: 200, onComplete: () => sl.destroy() });
     this.time.delayedCall(110, () => {
       if (p.dead) return;
       this.smashPropsInRadius(sx, p.fy + Math.sin(ang) * 20, 32);
@@ -1831,7 +1837,8 @@ export default class GameScene extends Phaser.Scene {
     const rot = w.t * 0.03;
     this.vfx.updateWhirlVisuals(w, p, dt);
     p.sprite.setFlipX(Math.floor(w.t / 60) % 2 === 0);
-    p.sword.setRotation(rot * 1.5);
+    if (p.usesCustomArt) p.sprite.setAngle(Math.sin(w.t * 0.045) * 11);
+    else p.sword.setRotation(rot * 1.5);
     const tickAt = [0, 160, 320];
     while (w.ticks < 3 && w.t >= tickAt[w.ticks]) {
       w.ticks++;
@@ -1848,6 +1855,7 @@ export default class GameScene extends Phaser.Scene {
     if (w.t >= w.dur) {
       this.vfx.destroyWhirlVisuals(w);
       this.whirl = null;
+      if (p.usesCustomArt) p.sprite.setAngle(0);
       const s = getStats();
       if (s.setEffects?.whirlQuake && !p.dead) {
         const R = 155;
