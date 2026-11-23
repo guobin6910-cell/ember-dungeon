@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { PLAYER_R } from './Player.js';
 import { state } from '../state.js';
 import { getDifficulty } from '../systems/difficulty.js';
+import { ensureEntityArtTexture } from '../systems/dungeonArt.js';
 
 export const ENEMY_TYPES = {
   skeleton: {
@@ -50,12 +51,13 @@ const rand = Phaser.Math.Between;
 
 export default class Enemy {
   constructor(scene, type, x, y, lvl = 1) {
-    const T = ENEMY_TYPES[type];
+    const T = { ...ENEMY_TYPES[type] };
     this.scene = scene;
     this.type = type;
     this.T = T;
     this.lvl = lvl;
     this.isDummy = !!T.isDummy;
+    this._customArt = false;
     const diff = getDifficulty(state.difficulty);
     this.maxHp = this.isDummy ? T.hp : Math.max(1, Math.round(T.hp * (1 + (lvl - 1) * 0.22) * diff.hpMul));
     this.hp = this.maxHp;
@@ -75,9 +77,10 @@ export default class Enemy {
       }).setOrigin(0.5).setDepth(9450);
     }
     this.sprite = scene.physics.add.sprite(x, y - T.foot, T.tex);
-    this.sprite.body.setCircle(T.r, T.w / 2 - T.r, T.h / 2 + T.foot - T.r);
+    this.syncBody();
     if (this.isDummy) this.sprite.body.immovable = true;
     this.sprite.enemy = this;
+    this.applyCustomArt();
 
     this.aggro = false;
     this.aggroDist = T.aggroDist || 330;
@@ -101,6 +104,37 @@ export default class Enemy {
 
   get fx() { return this.sprite.x; }
   get fy() { return this.sprite.y + this.T.foot; }
+
+  syncBody() {
+    if (this.sprite?.body) {
+      this.sprite.body.setCircle(this.T.r, this.T.w / 2 - this.T.r, this.T.h / 2 + this.T.foot - this.T.r);
+    }
+  }
+
+  applyCustomArt() {
+    if (this._customArt || this.dead || !this.sprite?.active) return false;
+    if (this.type !== 'skeleton' && this.type !== 'gargoyle') return false;
+    const spec = ensureEntityArtTexture(this.scene, this.type);
+    if (!spec) return false;
+    const gx = this.fx, gy = this.fy;
+    this._customArt = true;
+    this.T.tex = spec.texKey;
+    this.T.w = spec.w;
+    this.T.h = spec.h;
+    this.T.r = spec.r;
+    this.T.foot = spec.foot;
+    this.sprite.setTexture(spec.texKey);
+    this.sprite.setPosition(gx, gy - this.T.foot);
+    this.syncBody();
+    this.shadow.setScale(this.T.r / 13, this.T.r / 34);
+    if (this.aura) {
+      this.aura.setScale(this.type === 'gargoyle' ? 1.45 : 1.2, this.type === 'gargoyle' ? 0.6 : 0.5);
+    }
+    if (this.label) {
+      this.label.setPosition(this.fx, this.sprite.y - this.T.h / 2 - 22);
+    }
+    return true;
+  }
 
   flash(color = 0xffffff, duration = 100) {
     this.flashT = duration;
@@ -296,13 +330,14 @@ export default class Enemy {
 
     // 動畫
     const moving = body.velocity.length() > 5;
+    const tiltAmp = this._customArt ? 4.5 : 6;
     if (!this.wind) {
-      if (moving) { this.walkT += dt; this.sprite.setAngle(Math.sin(this.walkT * 0.016) * 6); }
+      if (moving) { this.walkT += dt; this.sprite.setAngle(Math.sin(this.walkT * 0.016) * tiltAmp); }
       else this.sprite.setAngle(this.sprite.angle * 0.8);
     }
     this.sprite.setFlipX(this.facing < 0);
     this.sprite.setDepth(this.fy);
-    this.shadow.setPosition(this.fx, this.fy + 2);
+    this.shadow.setPosition(this.fx, this.fy + 1);
     if (this.aura) this.aura.setPosition(this.fx, this.fy);
     if (this.label) this.label.setPosition(this.fx, this.sprite.y - T.h / 2 - 22);
   }

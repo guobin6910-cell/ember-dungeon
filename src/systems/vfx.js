@@ -1346,7 +1346,7 @@ export class VfxManager {
   }
 
   // ---- 暗影閃現
-  playBlink(ox, oy, bx, by, R, flipX) {
+  playBlink(ox, oy, bx, by, R, flipX, texKey = 'player', foot = 12) {
     const enabled = this.isEnabled();
     // 離場印記與殘影
     const departRing = this.scene.add.image(ox, oy - 6, 'vfx_ring')
@@ -1369,7 +1369,7 @@ export class VfxManager {
     this.addTimedLight(bx, by, 155, 0.7, 300);
     if (!enabled) return;
 
-    const ghost = this.scene.add.image(ox, oy - 12, 'player')
+    const ghost = this.scene.add.image(ox, oy - foot, texKey)
       .setAlpha(0.5)
       .setTint(0x9040ff)
       .setFlipX(flipX)

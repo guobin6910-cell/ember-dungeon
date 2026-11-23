@@ -1,15 +1,20 @@
 import Phaser from 'phaser';
+import { ensureEntityArtTexture } from '../systems/dungeonArt.js';
 
 export const PLAYER_FOOT = 12;
-export const PLAYER_R = 10;
+export const PLAYER_R = 12;
 
 export default class Player {
   constructor(scene, x, y) {
     this.scene = scene;
+    this.w = 36;
+    this.h = 48;
+    this.foot = PLAYER_FOOT;
+    this.usesCustomArt = false;
     this.shadow = scene.add.image(x, y, 'shadowtex').setScale(0.75, 0.32);
-    this.sprite = scene.physics.add.sprite(x, y - PLAYER_FOOT, 'player');
-    this.sprite.body.setCircle(PLAYER_R, 18 - PLAYER_R, 24 + PLAYER_FOOT - PLAYER_R);
+    this.sprite = scene.physics.add.sprite(x, y - this.foot, 'player');
     this.sword = scene.add.image(x, y, 'sword').setOrigin(0.5, 0.82);
+    this.syncBody();
     this.path = [];
     this.joyVec = { x: 0, y: 0 };
     this.keyVec = { x: 0, y: 0 };
@@ -32,10 +37,39 @@ export default class Player {
     this.onStuck = null;
     this.lastPos = { x, y };
     this.dead = false;
+    this.applyCustomArt();
   }
 
   get fx() { return this.sprite.x; }
-  get fy() { return this.sprite.y + PLAYER_FOOT; }
+  get fy() { return this.sprite.y + this.foot; }
+  get topY() { return this.sprite.y - this.h / 2; }
+
+  setFootPosition(x, y) {
+    this.sprite.setPosition(x, y - this.foot);
+  }
+
+  syncBody() {
+    if (this.sprite?.body) {
+      this.sprite.body.setCircle(PLAYER_R, this.w / 2 - PLAYER_R, this.h / 2 + this.foot - PLAYER_R);
+    }
+  }
+
+  applyCustomArt() {
+    if (this.usesCustomArt || !this.sprite?.active) return false;
+    const spec = ensureEntityArtTexture(this.scene, 'player');
+    if (!spec) return false;
+    const gx = this.fx, gy = this.fy;
+    this.usesCustomArt = true;
+    this.w = spec.w;
+    this.h = spec.h;
+    this.foot = spec.foot;
+    this.sprite.setTexture(spec.texKey);
+    this.sprite.setPosition(gx, gy - this.foot);
+    this.syncBody();
+    this.shadow.setScale(0.95, 0.36);
+    this.sword.setScale(1.15);
+    return true;
+  }
 
   setPath(pts) {
     this.path = pts || [];
@@ -227,22 +261,27 @@ export default class Player {
     }
     this.lastPos.x = this.fx; this.lastPos.y = this.fy;
 
-    // 走路動畫
+    // 走路與揮劍動作
     const moving = body.velocity.length() > 5 && !this.dodge && !this.dash;
-    if (moving) {
+    const tiltAmp = this.usesCustomArt ? 4.5 : 7;
+    if (this.swing && !this.dodge && this.usesCustomArt) {
+      const sp = Math.min(1, this.swing.t / this.swing.dur);
+      s.setAngle(this.facing * Math.sin(sp * Math.PI) * 9);
+    } else if (moving) {
       this.walkT += dt;
-      s.setAngle(Math.sin(this.walkT * 0.018) * 7);
+      s.setAngle(Math.sin(this.walkT * 0.018) * tiltAmp);
     } else if (!this.dodge) {
       this.walkT = 0;
       s.setAngle(s.angle * 0.8);
     }
     s.setFlipX(this.facing < 0);
     s.setDepth(this.fy);
-    this.shadow.setPosition(this.fx, this.fy + 2).setDepth(2);
+    this.shadow.setPosition(this.fx, this.fy + 1).setDepth(2);
 
     // 劍
-    const hx = s.x + this.facing * 11, hy = s.y + 6;
-    this.sword.setPosition(hx, hy).setDepth(this.fy + 1).setVisible(!this.dodge);
+    const hx = s.x + this.facing * (this.usesCustomArt ? 14 : 11), hy = s.y + 6;
+    const showSword = !this.dodge && !this.dead && (!this.usesCustomArt || !!this.swing || !!this.scene?.whirl);
+    this.sword.setPosition(hx, hy).setDepth(this.fy + 1).setVisible(showSword);
     if (this.swing) {
       this.swing.t += dt;
       const p = Math.min(1, this.swing.t / this.swing.dur);

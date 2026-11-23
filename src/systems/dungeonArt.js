@@ -1,6 +1,10 @@
 import floorUrl from '../../assets/dungeon-floor-512.png';
 import wallUrl from '../../assets/dungeon-wall-512.png';
 import backdropUrl from '../../assets/dungeon-backdrop-1280.png';
+import heroWarriorUrl from '../../assets/hero-warrior-512.png';
+import monsterSkeletonUrl from '../../assets/monster-skeleton-512.png';
+import monsterGargoyleUrl from '../../assets/monster-gargoyle-512.png';
+import bossTyrantUrl from '../../assets/boss-skeletal-tyrant-512.png';
 import { TILE } from './textures.js';
 
 export const ART_KEYS = {
@@ -9,7 +13,65 @@ export const ART_KEYS = {
   FLOOR_TILE: 'dungeon_floor_256',
   WALL: 'dungeon_wall',
   WALL_ATLAS: 'dungeon_wall_atlas',
+  HERO_RAW: 'art_hero_warrior_raw',
+  HERO: 'art_hero_warrior',
+  SKELETON_RAW: 'art_skeleton_raw',
+  SKELETON: 'art_skeleton',
+  GARGOYLE_RAW: 'art_gargoyle_raw',
+  GARGOYLE: 'art_gargoyle',
+  BOSS_BONE_RAW: 'art_boss_bone_raw',
+  BOSS_BONE: 'art_boss_bone',
 };
+
+export const ENTITY_ART_SPECS = {
+  player: {
+    rawKey: ART_KEYS.HERO_RAW,
+    texKey: ART_KEYS.HERO,
+    w: 44,
+    h: 88,
+    drawH: 84,
+    foot: 39,
+    r: 12,
+    flipX: false,
+  },
+  skeleton: {
+    rawKey: ART_KEYS.SKELETON_RAW,
+    texKey: ART_KEYS.SKELETON,
+    w: 50,
+    h: 88,
+    drawH: 84,
+    foot: 39,
+    r: 14,
+    flipX: false,
+  },
+  gargoyle: {
+    rawKey: ART_KEYS.GARGOYLE_RAW,
+    texKey: ART_KEYS.GARGOYLE,
+    w: 66,
+    h: 108,
+    drawH: 104,
+    foot: 49,
+    r: 21,
+    flipX: true,
+  },
+  boss_bone: {
+    rawKey: ART_KEYS.BOSS_BONE_RAW,
+    texKey: ART_KEYS.BOSS_BONE,
+    w: 74,
+    h: 136,
+    drawH: 132,
+    foot: 58,
+    r: 30,
+    flipX: true,
+  },
+};
+
+const ENTITY_RAW_KEYS = new Set([
+  ART_KEYS.HERO_RAW,
+  ART_KEYS.SKELETON_RAW,
+  ART_KEYS.GARGOYLE_RAW,
+  ART_KEYS.BOSS_BONE_RAW,
+]);
 
 // 依 4 大生態系微調寫實材質明暗與色調，維持地城原本的昏暗氛圍與敵我辨識度
 export const BIOME_ART_STYLES = {
@@ -58,6 +120,10 @@ export function preloadDungeonArt(game) {
     [ART_KEYS.BACKDROP, backdropUrl],
     [ART_KEYS.FLOOR, floorUrl],
     [ART_KEYS.WALL, wallUrl],
+    [ART_KEYS.HERO_RAW, heroWarriorUrl],
+    [ART_KEYS.SKELETON_RAW, monsterSkeletonUrl],
+    [ART_KEYS.GARGOYLE_RAW, monsterGargoyleUrl],
+    [ART_KEYS.BOSS_BONE_RAW, bossTyrantUrl],
   ];
 
   for (const [key, url] of sources) {
@@ -78,6 +144,9 @@ export function preloadDungeonArt(game) {
         }
         game.events.emit(`dungeonArtLoaded:${key}`);
         game.events.emit('dungeonArtLoaded', key);
+        if (ENTITY_RAW_KEYS.has(key)) {
+          game.events.emit('entityArtLoaded', key);
+        }
         if (isDungeonArtReady(game) && !tracker.readyEmitted) {
           tracker.readyEmitted = true;
           game.events.emit('dungeonArtReady');
@@ -182,5 +251,69 @@ export function ensureDungeonArtTextures(scene, biome) {
   }
 
   return { maskKey, style };
+}
+
+export function isEntityArtReady(game, id) {
+  const spec = ENTITY_ART_SPECS[id];
+  return !!(spec && game?.textures?.exists(spec.rawKey));
+}
+
+/**
+ * 將透明底 512px 角色／怪物圖以兩階段降採樣烘焙至實戰尺寸並清除微弱綠幕溢色，
+ * 確保直接搭配原有物理碰撞圈、縮放 tween 與左右翻轉正常運作。
+ */
+export function ensureEntityArtTexture(scene, id) {
+  const spec = ENTITY_ART_SPECS[id];
+  if (!spec || !scene?.textures?.exists(spec.rawKey)) return null;
+
+  if (!scene.textures.exists(spec.texKey)) {
+    const srcImg = scene.textures.get(spec.rawKey).getSourceImage();
+    const drawH = spec.drawH;
+    const drawW = Math.max(1, Math.round((srcImg.width / srcImg.height) * drawH));
+
+    const stepCanvas = document.createElement('canvas');
+    stepCanvas.width = drawW * 2;
+    stepCanvas.height = drawH * 2;
+    const stepCtx = stepCanvas.getContext('2d');
+    stepCtx.imageSmoothingEnabled = true;
+    stepCtx.imageSmoothingQuality = 'high';
+    stepCtx.drawImage(srcImg, 0, 0, stepCanvas.width, stepCanvas.height);
+
+    const tex = scene.textures.createCanvas(spec.texKey, spec.w, spec.h);
+    const ctx = tex.getContext();
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    const dx = Math.round((spec.w - drawW) / 2);
+    const dy = spec.h - 2 - drawH;
+    if (spec.flipX) {
+      ctx.save();
+      ctx.translate(spec.w, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(stepCanvas, dx, dy, drawW, drawH);
+      ctx.restore();
+    } else {
+      ctx.drawImage(stepCanvas, dx, dy, drawW, drawH);
+    }
+
+    const imgData = ctx.getImageData(0, 0, spec.w, spec.h);
+    const { data } = imgData;
+    for (let i = 0; i < data.length; i += 4) {
+      const a = data[i + 3];
+      if (a < 8) continue;
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      const maxRB = Math.max(r, b);
+      if (g > maxRB + 10) {
+        const excess = g - maxRB;
+        data[i + 1] = Math.round(maxRB + excess * 0.15);
+        if (a < 235 && excess > 24) {
+          data[i + 3] = Math.max(0, Math.round(a * 0.45));
+        }
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+    tex.refresh();
+  }
+
+  return spec;
 }
 

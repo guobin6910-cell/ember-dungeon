@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { PLAYER_R } from './Player.js';
 import { state } from '../state.js';
 import { getDifficulty } from '../systems/difficulty.js';
+import { ensureEntityArtTexture } from '../systems/dungeonArt.js';
 
 export const BOSS_TYPES = {
   bone: {
@@ -95,16 +96,44 @@ export default class Boss {
 
     this.shadow = scene.add.image(x, y, 'shadowtex').setScale(2.6, 0.9).setDepth(2);
     this.aura = scene.add.image(x, y, 'glow').setTint(def.aura).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.5).setScale(2.4, 1).setDepth(2);
-    this.sprite = scene.physics.add.sprite(x, y - 40, def.tex);
-    this.sprite.body.setCircle(30, 60 - 30, 60 + 40 - 30);
+    this._customArt = false;
+    this.sprite = scene.physics.add.sprite(x, y - this.T.foot, def.tex);
+    this.syncBody();
     this.sprite.body.pushable = false;
     this.sprite.enemy = this;
     this.light = { x, y, r: 200, a: 0.65 };
     scene.extraLights.push(this.light);
+    this.applyCustomArt();
   }
 
   get fx() { return this.sprite.x; }
-  get fy() { return this.sprite.y + 40; }
+  get fy() { return this.sprite.y + this.T.foot; }
+
+  syncBody() {
+    if (this.sprite?.body) {
+      this.sprite.body.setCircle(this.T.r, this.T.w / 2 - this.T.r, this.T.h / 2 + this.T.foot - this.T.r);
+    }
+  }
+
+  applyCustomArt() {
+    if (this._customArt || this.dead || !this.sprite?.active || this.bossType !== 'bone') return false;
+    const spec = ensureEntityArtTexture(this.scene, 'boss_bone');
+    if (!spec) return false;
+    const gx = this.fx, gy = this.fy;
+    this._customArt = true;
+    this.T.tex = spec.texKey;
+    this.T.w = spec.w;
+    this.T.h = spec.h;
+    this.T.r = spec.r;
+    this.T.foot = spec.foot;
+    this.sprite.setTexture(spec.texKey);
+    this.sprite.setPosition(gx, gy - this.T.foot);
+    this.syncBody();
+    this.shadow.setScale(2.4, 0.85);
+    this.aura.setScale(2.3, 0.95);
+    this.light.r = 245;
+    return true;
+  }
 
   flash(color = 0xffffff, duration = 100) {
     this.flashT = duration;
@@ -140,9 +169,9 @@ export default class Boss {
 
     const t = sc.time.now;
     this.sprite.setScale(1 + Math.sin(t * 0.004) * 0.03, 1 - Math.sin(t * 0.004) * 0.03);
-    this.shadow.setPosition(this.fx, this.fy + 2);
+    this.shadow.setPosition(this.fx, this.fy + 1);
     this.aura.setPosition(this.fx, this.fy).setAlpha(0.4 + Math.sin(t * 0.006) * 0.15);
-    this.light.x = this.fx; this.light.y = this.fy - 30;
+    this.light.x = this.fx; this.light.y = this.fy - Math.round(this.T.foot * 0.85);
     this.sprite.setDepth(this.fy);
 
     if (!this.active || p.dead) { body.setVelocity(0, 0); return; }
@@ -180,7 +209,7 @@ export default class Boss {
       return;
     }
     const curSp = this.slowT > 0 ? this.speed * 0.55 : this.speed;
-    if (dist - 30 - PLAYER_R > 50) {
+    if (dist - this.T.r - PLAYER_R > 50) {
       body.setVelocity((dx / dist) * curSp, (dy / dist) * curSp);
     } else body.setVelocity(0, 0);
   }
@@ -206,7 +235,7 @@ export default class Boss {
           tele.destroy(); inner.destroy();
           this.sprite.setAngle(0);
           sc.slamEffect(cx, cy, R);
-          const s = sc.add.image(cx, cy - 20, 'slash').setScale(2.6).setTint(0xff4060).setBlendMode(Phaser.BlendModes.ADD).setDepth(9200);
+          const s = sc.add.image(cx, cy - Math.round(this.T.foot * 0.55), 'slash').setScale(this._customArt ? 2.8 : 2.6).setTint(0xff4060).setBlendMode(Phaser.BlendModes.ADD).setDepth(9200);
           sc.tweens.add({ targets: s, rotation: Math.PI * 2, alpha: 0, duration: 400, onComplete: () => s.destroy() });
           const p = sc.player;
           if (Math.hypot(p.fx - cx, p.fy - cy) < R + PLAYER_R) sc.hurtPlayer(this.dmg * 1.3, cx, cy, this);
@@ -223,9 +252,10 @@ export default class Boss {
         sc.time.delayedCall(350 + w * 350, () => {
           if (this.dead) return;
           const baseAng = Math.atan2(sc.player.fy - this.fy, sc.player.fx - this.fx);
+          const arrowY = this.fy - Math.round(this.T.foot * 0.6);
           for (let i = 0; i < count; i++) {
             const off = (i - (count - 1) / 2) * 0.22;
-            sc.spawnArrow(this.fx, this.fy - 30, baseAng + off, this.dmg * 0.65, this);
+            sc.spawnArrow(this.fx, arrowY, baseAng + off, this.dmg * 0.65, this);
           }
         });
       }
@@ -246,7 +276,7 @@ export default class Boss {
           sc.sfx('roar');
           this.sprite.body.setVelocity(Math.cos(ang) * 760, Math.sin(ang) * 760);
         } else if (act.rushing && act.t < windDur + rushDur) {
-          if (!act.hit && Math.hypot(sc.player.fx - this.fx, sc.player.fy - this.fy) < 48) {
+          if (!act.hit && Math.hypot(sc.player.fx - this.fx, sc.player.fy - this.fy) < this.T.r + PLAYER_R + 10) {
             act.hit = true;
             sc.hurtPlayer(this.dmg * 1.2, this.fx, this.fy, this);
           }
@@ -263,6 +293,7 @@ export default class Boss {
       const count = this.enraged ? 16 : 12;
       sc.sfx(isFrost ? 'frost' : 'nova');
       this.action = { t: 0, dur: 500 + waves * 380 };
+      const castY = this.fy - Math.round(this.T.foot * 0.68);
       for (let w = 0; w < waves; w++) {
         sc.time.delayedCall(400 + w * 380, () => {
           if (this.dead) return;
@@ -270,12 +301,12 @@ export default class Boss {
           const off = (w % 2) * (Math.PI / count);
           for (let i = 0; i < count; i++) {
             const ang = (i / count) * Math.PI * 2 + off;
-            if (isFrost) sc.spawnIceBolt(this.fx, this.fy - 40, ang, this.dmg * 0.5, this);
-            else sc.spawnOrb(this.fx, this.fy - 40, ang, this.dmg * 0.5, this.bossType === 'blood' ? 'bloodbolt' : 'orb', this);
+            if (isFrost) sc.spawnIceBolt(this.fx, castY, ang, this.dmg * 0.5, this);
+            else sc.spawnOrb(this.fx, castY, ang, this.dmg * 0.5, this.bossType === 'blood' ? 'bloodbolt' : 'orb', this);
           }
         });
       }
-      const g = sc.add.image(this.fx, this.fy - 40, 'glow').setTint(this.def.light).setBlendMode(Phaser.BlendModes.ADD).setScale(0.5).setDepth(9200);
+      const g = sc.add.image(this.fx, castY, 'glow').setTint(this.def.light).setBlendMode(Phaser.BlendModes.ADD).setScale(0.5).setDepth(9200);
       sc.tweens.add({ targets: g, scale: 2.5, alpha: 0, duration: 500 + waves * 380, onComplete: () => g.destroy() });
       this.actT = 2200 * cdMul;
     } else if (kind === 'slam') {
