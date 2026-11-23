@@ -1,4 +1,4 @@
-export const MAX_SOCKETS = 3;
+export const MAX_SOCKETS = 6;
 
 export const RUNE_DEFS = {
   blood: {
@@ -75,6 +75,13 @@ export const RUNEWORD_DEFS = {
     bonus: { dmgRed: 0.10 },
     auraTick: 'frost',
   },
+  fortune: {
+    id: 'fortune', name: '尋寶光環', runes: ['crit', 'holy'],
+    color: '#ffe048', hex: 0xffe048,
+    short: '掉寶率+45% 金幣+40% 爆擊+5%',
+    desc: '掉寶率 +45%、金幣掉落 +40%、爆擊率 +5%',
+    bonus: { magicFind: 0.45, goldFind: 0.40, critChance: 0.05 },
+  },
   arcane_surge: {
     id: 'arcane_surge', name: '秘法湧動光環', runes: ['arcane', 'wind', 'holy'],
     color: '#b868ff', hex: 0xb868ff,
@@ -89,16 +96,72 @@ export const RUNEWORD_DEFS = {
     desc: '吸血 +12%、反傷 +80%、減傷 +15%、每秒回血 2%',
     bonus: { lifesteal: 0.12, thorns: 0.80, dmgRed: 0.15, hpRegenPct: 0.02 },
   },
-  fortune: {
-    id: 'fortune', name: '尋寶光環', runes: ['crit', 'holy'],
-    color: '#ffe048', hex: 0xffe048,
-    short: '掉寶率+45% 金幣+40% 爆擊+5%',
-    desc: '掉寶率 +45%、金幣掉落 +40%、爆擊率 +5%',
-    bonus: { magicFind: 0.45, goldFind: 0.40, critChance: 0.05 },
+  storm_blade: {
+    id: 'storm_blade', name: '雷霆斬光環', runes: ['flame', 'wind', 'crit'],
+    color: '#60e8ff', hex: 0x60e8ff,
+    short: '攻+18 攻速+22% 爆擊+8% 電弧+22% 雷環',
+    desc: '攻擊 +18、攻速 +22%、爆擊 +8%、電弧追擊 +22%、周圍雷電衝擊',
+    bonus: { atk: 18, atkSpeed: 0.22, critChance: 0.08, chainProc: 0.22 },
+    auraTick: 'storm',
+  },
+  blood_reaper: {
+    id: 'blood_reaper', name: '血月收割光環', runes: ['blood', 'flame', 'wind', 'crit'],
+    color: '#ff2858', hex: 0xff2858,
+    short: '攻+22% 吸血+16% 爆+10% 爆傷+45% 移速+15%',
+    desc: '攻擊力 +22%、吸血 +16%、爆擊 +10%、爆傷 +45%、移速 +15%',
+    bonus: { atkPct: 0.22, lifesteal: 0.16, critChance: 0.10, critDmg: 0.45, moveSpeed: 0.15 },
+  },
+  frostfire_domain: {
+    id: 'frostfire_domain', name: '霜炎領域光環', runes: ['flame', 'frost', 'arcane', 'crit'],
+    color: '#c878ff', hex: 0xc878ff,
+    short: '技傷+35% 全技+1 CD-18% 減耗18% 霜炎雙環',
+    desc: '技能傷害 +35%、全技能 +1、冷卻 -18%、耗魔 -18%、冰霜反擊 +22%、同時啟動烈焰與寒霜光環',
+    bonus: { spellPowerBonus: 0.35, allSkills: 1, cdr: 0.18, manaCostRed: 0.18, novaProc: 0.22 },
+    auraTick: 'frostfire',
+  },
+  aegis_bastion: {
+    id: 'aegis_bastion', name: '聖盾壁壘光環', runes: ['thorn', 'frost', 'holy', 'blood'],
+    color: '#ffe088', hex: 0xffe088,
+    short: '防+28 血+160 減傷+20% 反傷+110% 回血2.5%/s',
+    desc: '防禦 +28、生命 +160、減傷 +20%、反傷 +110%、每秒回血 2.5%',
+    bonus: { def: 28, hp: 160, dmgRed: 0.20, thorns: 1.10, hpRegenPct: 0.025 },
+  },
+  abyss_warlord: {
+    id: 'abyss_warlord', name: '深淵戰神光環', runes: ['blood', 'flame', 'wind', 'crit', 'holy'],
+    color: '#ff5828', hex: 0xff5828,
+    short: '攻+32% 攻速+30% 爆+14% 爆傷+65% 吸血18% 烈焰環',
+    desc: '攻擊力 +32%、攻速 +30%、爆擊 +14%、爆傷 +65%、吸血 +18%、減傷 +12%、電弧 +25%、周圍烈焰灼燒',
+    bonus: { atkPct: 0.32, atkSpeed: 0.30, critChance: 0.14, critDmg: 0.65, lifesteal: 0.18, dmgRed: 0.12, chainProc: 0.25 },
+    auraTick: 'burn',
+  },
+  astral_sovereign: {
+    id: 'astral_sovereign', name: '星穹大法師光環', runes: ['flame', 'frost', 'wind', 'arcane', 'holy'],
+    color: '#90b8ff', hex: 0x90b8ff,
+    short: '全技+2 技傷+50% CD-26% 減耗25% 回魔+220% 雷環',
+    desc: '全技能 +2、技能傷害 +50%、冷卻 -26%、耗魔 -25%、回魔 +220%、翻滾冷卻 -25%、周圍雷電衝擊',
+    bonus: { allSkills: 2, spellPowerBonus: 0.50, cdr: 0.26, manaCostRed: 0.25, mpRegenBonus: 2.2, dodgeCdr: 0.25 },
+    auraTick: 'storm',
+  },
+  ember_sovereign: {
+    id: 'ember_sovereign', name: '餘燼神王光環', runes: ['blood', 'flame', 'frost', 'wind', 'arcane', 'holy'],
+    color: '#ffaa28', hex: 0xffaa28,
+    short: '全技+2 攻+38% 技傷+55% CD-28% 減傷22% 滅世環',
+    desc: '全技能 +2、攻擊力 +38%、技能傷害 +55%、冷卻 -28%、減傷 +22%、吸血 +20%、移速 +25%、每秒回血 3%、週期釋放滅世餘燼波',
+    bonus: { allSkills: 2, atkPct: 0.38, spellPowerBonus: 0.55, cdr: 0.28, dmgRed: 0.22, lifesteal: 0.20, moveSpeed: 0.25, hpRegenPct: 0.03 },
+    auraTick: 'cataclysm',
+  },
+  eternal_plunder: {
+    id: 'eternal_plunder', name: '永劫天命光環', runes: ['blood', 'thorn', 'wind', 'arcane', 'crit', 'holy'],
+    color: '#ffe868', hex: 0xffe868,
+    short: '全技+2 掉寶+90% 金幣+80% 爆+18% 爆傷+80% 雷環',
+    desc: '全技能 +2、掉寶率 +90%、金幣 +80%、爆擊 +18%、爆傷 +80%、反傷 +120%、擊殺回血 +35 / 回魔 +25、周圍雷電衝擊',
+    bonus: { allSkills: 2, magicFind: 0.90, goldFind: 0.80, critChance: 0.18, critDmg: 0.80, thorns: 1.20, onKillHp: 35, onKillMp: 25 },
+    auraTick: 'storm',
   },
 };
 
 export const RUNEWORD_LIST = Object.values(RUNEWORD_DEFS);
+const RUNEWORDS_BY_SIZE = [...RUNEWORD_LIST].sort((a, b) => b.runes.length - a.runes.length);
 
 const RARE_RUNES = new Set(['arcane', 'crit', 'holy']);
 
@@ -130,13 +193,8 @@ function containsAll(have, need) {
 
 export function matchRuneword(runeIds) {
   if (!runeIds || runeIds.length < 2) return null;
-  if (runeIds.length >= 3) {
-    for (const rw of RUNEWORD_LIST) {
-      if (rw.runes.length >= 3 && containsAll(runeIds, rw.runes)) return rw;
-    }
-  }
-  for (const rw of RUNEWORD_LIST) {
-    if (rw.runes.length === 2 && containsAll(runeIds, rw.runes)) return rw;
+  for (const rw of RUNEWORDS_BY_SIZE) {
+    if (rw.runes.length <= runeIds.length && containsAll(runeIds, rw.runes)) return rw;
   }
   return null;
 }

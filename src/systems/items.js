@@ -229,33 +229,58 @@ function rollSpecialAffixes(quality, ilvl, guaranteed = []) {
   return list;
 }
 
-function rollQuality(bonus = 0) {
+export function rollQuality(bonus = 0) {
+  const b = Math.max(0, Math.min(0.45, bonus));
   const r = Math.random();
-  if (r < 0.035 + bonus * 0.3) return 'special';
-  if (r < 0.11 + bonus * 0.6) return 'gold';
-  if (r < 0.40 + bonus) return 'blue';
+  if (r < 0.012 + b * 0.10) return 'special';
+  if (r < 0.070 + b * 0.36) return 'gold';
+  if (r < 0.320 + b * 0.72) return 'blue';
   return 'white';
 }
 
 function rollSockets(quality) {
   const r = Math.random();
-  if (quality === 'special') return r < 0.55 ? 2 : 3;
-  if (quality === 'set') return r < 0.20 ? 1 : r < 0.72 ? 2 : 3;
+  if (quality === 'special') {
+    if (r < 0.15) return 2;
+    if (r < 0.40) return 3;
+    if (r < 0.65) return 4;
+    if (r < 0.85) return 5;
+    return 6;
+  }
+  if (quality === 'set') {
+    if (r < 0.12) return 1;
+    if (r < 0.34) return 2;
+    if (r < 0.60) return 3;
+    if (r < 0.80) return 4;
+    if (r < 0.92) return 5;
+    return 6;
+  }
   if (quality === 'gold') {
-    if (r < 0.15) return 0;
-    if (r < 0.40) return 1;
-    if (r < 0.78) return 2;
-    return 3;
+    if (r < 0.08) return 0;
+    if (r < 0.24) return 1;
+    if (r < 0.46) return 2;
+    if (r < 0.68) return 3;
+    if (r < 0.84) return 4;
+    if (r < 0.94) return 5;
+    return 6;
   }
   if (quality === 'blue') {
-    if (r < 0.35) return 0;
-    if (r < 0.70) return 1;
-    if (r < 0.94) return 2;
-    return 3;
+    if (r < 0.20) return 0;
+    if (r < 0.44) return 1;
+    if (r < 0.66) return 2;
+    if (r < 0.82) return 3;
+    if (r < 0.92) return 4;
+    if (r < 0.97) return 5;
+    return 6;
   }
-  if (r < 0.50) return 0;
-  if (r < 0.85) return 1;
-  return 2;
+  // white（開放 1~6 洞白底裝供高端符文組使用）
+  if (r < 0.30) return 0;
+  if (r < 0.58) return 1;
+  if (r < 0.78) return 2;
+  if (r < 0.90) return 3;
+  if (r < 0.96) return 4;
+  if (r < 0.99) return 5;
+  return 6;
 }
 
 function affixValue(stat, ilvl, mult) {
@@ -357,7 +382,7 @@ export function generateSetItem(setId = null, ilvl = 1, forceSlot = null, ownedS
   if (!slot) {
     if (ownedSlots && ownedSlots.size) {
       const missing = def.slots.filter((s) => !ownedSlots.has(s));
-      if (missing.length && Math.random() < 0.78) slot = Phaser.Utils.Array.GetRandom(missing);
+      if (missing.length && Math.random() < 0.50) slot = Phaser.Utils.Array.GetRandom(missing);
     }
     if (!slot) slot = Phaser.Utils.Array.GetRandom(def.slots);
   }
@@ -443,7 +468,7 @@ export function reforgeItem(item) {
 }
 
 export function convertSetPieceCost(item) {
-  return { gold: 150 + (item?.ilvl || 1) * 15, essence: 1 };
+  return { gold: 260 + (item?.ilvl || 1) * 22, essence: 2 };
 }
 
 export function convertSetPiece(item, ownedSlots = null) {
@@ -463,12 +488,16 @@ export function convertSetPiece(item, ownedSlots = null) {
 }
 
 export function craftSetCost(ilvl) {
-  return { gold: 200 + (ilvl || 1) * 25, shards: 3, essence: 2 };
+  return { gold: 450 + (ilvl || 1) * 40, shards: 8, essence: 4 };
 }
 
 export function punchSocketCost(item) {
   const s = item?.sockets || 0;
-  return { gold: 80 + (item?.ilvl || 1) * 20 + s * 90, shards: 1 + s };
+  const high = Math.max(0, s - 2);
+  return {
+    gold: 80 + (item?.ilvl || 1) * 20 + s * 100 + high * 50,
+    shards: 1 + s + high,
+  };
 }
 
 export function punchSocket(item) {
@@ -479,7 +508,7 @@ export function punchSocket(item) {
 }
 
 export function forgeCost(tier, ilvl) {
-  if (tier === 'legendary') return { gold: 120 + ilvl * 30, shards: 3 };
+  if (tier === 'legendary') return { gold: 180 + ilvl * 35, shards: 5 };
   return { gold: 50 + ilvl * 18, shards: 0 };
 }
 

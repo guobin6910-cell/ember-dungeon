@@ -14,10 +14,10 @@ import {
   preloadDungeonArt, isDungeonArtReady, ensureDungeonArtTextures, ART_KEYS,
 } from '../systems/dungeonArt.js';
 import { FONT, QUALITY_COLORS, QUALITY_HEX } from '../ui.js';
-import { generateItem, generateSetItem, generateSkillBook, itemDisplayName } from '../systems/items.js';
+import { generateItem, generateSetItem, generateSkillBook, itemDisplayName, rollQuality } from '../systems/items.js';
 import { getBossSetId } from '../systems/sets.js';
 import { getSkillData, SKILL_LIST } from '../systems/skills.js';
-import { RUNE_DEFS, rollRandomRune, runeDisplayName } from '../systems/runes.js';
+import { MAX_SOCKETS, RUNE_DEFS, rollRandomRune, runeDisplayName } from '../systems/runes.js';
 import { saveGame, loadGame, clearSave } from '../systems/save.js';
 import { getDifficulty } from '../systems/difficulty.js';
 
@@ -86,6 +86,8 @@ export default class GameScene extends Phaser.Scene {
     this.orbitBlades = [];
     this.burnAuraT = 0;
     this.frostAuraT = 0;
+    this.stormAuraT = 0;
+    this.cataclysmAuraT = 0;
     this.lifestealPool = 0;
     this.lifestealMsgT = 0;
 
@@ -289,7 +291,7 @@ export default class GameScene extends Phaser.Scene {
     window.__ember.giveSocketed = (sockets = 2, quality = 'gold', slot = null) => {
       if (state.inventory.length >= INV_SIZE) return null;
       const item = generateItem(Math.max(2, this.floor * 2 + 1), 0.3, quality, slot);
-      item.sockets = sockets;
+      item.sockets = Phaser.Math.Clamp(sockets, 0, MAX_SOCKETS);
       item.runes = [];
       state.inventory.push(item);
       this.game.events.emit('inventoryChanged');
@@ -732,22 +734,26 @@ export default class GameScene extends Phaser.Scene {
       const mf = getStats().magicFind;
       const count = rich ? 2 : rand(1, 2);
       for (let k = 0; k < count; k++) {
-        const qual = rich && k === 0
-          ? 'gold'
-          : Math.random() < Math.min(0.18, 0.04 + mf * 0.06)
-            ? 'special'
-            : Math.random() < Math.min(0.65, 0.35 + mf * 0.15)
-              ? 'gold'
-              : 'blue';
+        let qual;
+        if (rich && k === 0) {
+          const rr = Math.random();
+          qual = rr < Math.min(0.10, 0.04 + mf * 0.03) ? 'special'
+            : rr < Math.min(0.45, 0.32 + mf * 0.08) ? 'gold' : 'blue';
+        } else {
+          const rr = Math.random();
+          qual = rr < Math.min(0.08, 0.015 + mf * 0.03) ? 'special'
+            : rr < Math.min(0.34, (rich ? 0.24 : 0.13) + mf * 0.09) ? 'gold'
+              : rr < Math.min(0.76, (rich ? 0.64 : 0.50) + mf * 0.12) ? 'blue' : 'white';
+        }
         this.spawnItem(x + rand(-28, 28), y + rand(14, 30), generateItem(ilvl, Math.min(0.5, 0.25 + mf * 0.15), qual));
       }
       if (Math.random() < Math.min(0.65, 0.35 * (1 + mf * 0.3))) {
         this.spawnItem(x + rand(-20, 20), y + rand(12, 26), generateSkillBook());
       }
-      if (rich && Math.random() < 0.12) {
+      if (rich && Math.random() < Math.min(0.06, 0.03 * (1 + mf * 0.35))) {
         this.spawnItem(x + rand(-24, 24), y + rand(14, 28), generateSetItem(null, ilvl));
       }
-      if (Math.random() < Math.min(0.85, (rich ? 0.45 : 0.22) * (1 + mf * 0.6) * diff.runeMul)) {
+      if (Math.random() < Math.min(0.45, (rich ? 0.20 : 0.09) * (1 + mf * 0.5) * diff.runeMul)) {
         this.spawnRune(x + rand(-24, 24), y + rand(12, 26), rollRandomRune(this.floor));
       }
       if (Math.random() < 0.55) {
@@ -826,7 +832,7 @@ export default class GameScene extends Phaser.Scene {
       this.spawnItem(pr.x, pr.y, generateItem(Math.max(1, this.floor * 2 - 1), Math.min(0.35, 0.1 + mf * 0.15)));
     } else if (r < 0.68) {
       this.spawnItem(pr.x, pr.y, generateSkillBook());
-    } else if (r < Math.min(0.76, 0.71 + mf * 0.025)) {
+    } else if (r < Math.min(0.715, 0.692 + mf * 0.012)) {
       this.spawnRune(pr.x, pr.y, rollRandomRune(this.floor));
     } else if (r < 0.85) {
       const sp = this.spawnEnemy('spider', pr.x, pr.y, Math.max(1, this.floor * 2 - 1));
@@ -1649,7 +1655,7 @@ export default class GameScene extends Phaser.Scene {
       const shards = (e.isBoss ? 3 + Math.floor(this.floor / 2) : rand(1, 2)) + bonus;
       state.shards += shards;
       this.floatText(e.fx, e.sprite.y - 60, `+${shards} 餘燼石`, '#ff88ff', 15);
-      if (e.isBoss) {
+      if (e.isBoss && Math.random() < Math.min(0.75, 0.45 + mf * 0.12 + (diff.shardBonus > 0 ? 0.08 : 0))) {
         state.setEssence = (state.setEssence || 0) + 1;
         this.floatText(e.fx, e.sprite.y - 82, '+1 套裝精華', '#38f288', 15);
       }
@@ -1657,22 +1663,24 @@ export default class GameScene extends Phaser.Scene {
 
     const mf = s.magicFind || 0;
 
-    // 裝備掉落
-    const dropChance = e.isBoss ? 1 : Math.min(0.85, e.T.drop * (1 + mf * 0.5));
-    let drops = e.isBoss ? 3 : Math.random() < dropChance ? 1 : 0;
-    if (e.isBoss && mf >= 0.5 && Math.random() < mf * 0.45) drops++;
-    const qualBonus = Math.min(0.45, (e.T.elite ? 0.30 : 0) + mf * 0.16);
+    // 裝備掉落（依品質區分稀有度）
+    const dropChance = e.isBoss ? 1 : Math.min(0.78, e.T.drop * (1 + mf * 0.45));
+    let drops = e.isBoss ? (2 + (Math.random() < 0.5 ? 1 : 0)) : Math.random() < dropChance ? 1 : 0;
+    if (e.isBoss && mf >= 0.6 && Math.random() < mf * 0.35) drops++;
+    const qualBonus = Math.min(0.45, (e.T.elite ? 0.24 : 0) + mf * 0.14);
     const ilvl = Math.max(1, this.floor * 2 - 1 + Math.floor(e.lvl * 0.4));
     for (let k = 0; k < drops; k++) {
-      const spChance = Math.min(0.65, 0.35 + mf * 0.12);
-      const qual = e.isBoss ? (k === 0 && Math.random() < spChance ? 'special' : k < 2 ? 'gold' : 'blue') : null;
+      const spChance = Math.min(0.28, 0.12 + mf * 0.08);
+      const qual = e.isBoss
+        ? (k === 0 ? (Math.random() < spChance ? 'special' : 'gold') : rollQuality(Math.min(0.45, 0.22 + mf * 0.14)))
+        : null;
       const item = generateItem(ilvl + (e.isBoss ? 2 : 0), qualBonus, qual);
       this.spawnItem(e.fx + rand(-30, 30), e.fy + rand(-20, 20), item);
     }
 
-    // 頭目定向套裝掉落 & 精英稀有套裝掉落
+    // 頭目定向套裝掉落 & 精英稀有套裝掉落（大幅下修取得難度）
     if (e.isBoss) {
-      const bossSetChance = Math.min(0.92, 0.65 + mf * 0.15);
+      const bossSetChance = Math.min(0.42, 0.18 + mf * 0.10 + Math.min(0.08, (this.floor - 1) * 0.02));
       if (Math.random() < bossSetChance) {
         const setId = getBossSetId(e.bossType);
         const owned = new Set();
@@ -1685,7 +1693,7 @@ export default class GameScene extends Phaser.Scene {
         const setItem = generateSetItem(setId, ilvl + 2, null, owned);
         this.spawnItem(e.fx + rand(-28, 28), e.fy + rand(8, 28), setItem);
       }
-    } else if (e.T.elite && Math.random() < Math.min(0.22, 0.10 * (1 + mf * 0.4))) {
+    } else if (e.T.elite && Math.random() < Math.min(0.08, 0.025 * (1 + mf * 0.45))) {
       this.spawnItem(e.fx + rand(-24, 24), e.fy + rand(-12, 20), generateSetItem(null, ilvl));
     }
 
@@ -1695,12 +1703,16 @@ export default class GameScene extends Phaser.Scene {
       this.spawnItem(e.fx + rand(-26, 26), e.fy + rand(-18, 18), generateSkillBook());
     }
 
-    // 符文掉落（調低機率並受掉寶率與難度加成）
-    const runeCount = e.isBoss
-      ? 1 + (Math.random() < Math.min(0.85, (0.15 + mf * 0.4) * diff.runeMul) ? 1 : 0)
-      : Math.random() < (e.T.elite ? Math.min(0.55, 0.18 * (1 + mf * 0.65) * diff.runeMul) : Math.min(0.18, 0.035 * (1 + mf * 0.65) * diff.runeMul))
-        ? 1
-        : 0;
+    // 符文掉落（全面下修基礎機率並受掉寶率與難度加成）
+    let runeCount = 0;
+    if (e.isBoss) {
+      if (Math.random() < Math.min(0.85, (0.55 + mf * 0.22) * diff.runeMul)) runeCount++;
+      if (Math.random() < Math.min(0.35, (0.08 + mf * 0.14) * diff.runeMul)) runeCount++;
+    } else if (e.T.elite) {
+      if (Math.random() < Math.min(0.28, 0.08 * (1 + mf * 0.5) * diff.runeMul)) runeCount = 1;
+    } else {
+      if (Math.random() < Math.min(0.08, 0.014 * (1 + mf * 0.5) * diff.runeMul)) runeCount = 1;
+    }
     for (let k = 0; k < runeCount; k++) {
       this.spawnRune(e.fx + rand(-24, 24), e.fy + rand(-16, 16), rollRandomRune(this.floor));
     }
@@ -2967,13 +2979,21 @@ export default class GameScene extends Phaser.Scene {
       }
     };
 
-    if (s.activeAuras.some((a) => a.def.auraTick === 'burn')) {
+    if (s.activeAuras.some((a) => a.def.auraTick === 'burn' || a.def.auraTick === 'frostfire')) {
       const bdmg = Math.max(3, Math.round((6 + s.int * 0.8 + state.level * 1.4) * s.spellPower));
       tickAreaAura('burnAuraT', 800, 135, bdmg, 0xff7018, '#ff8030', false);
     }
-    if (s.activeAuras.some((a) => a.def.auraTick === 'frost')) {
+    if (s.activeAuras.some((a) => a.def.auraTick === 'frost' || a.def.auraTick === 'frostfire')) {
       const fdmg = Math.max(2, Math.round((4 + s.int * 0.6 + state.level * 1.1) * s.spellPower));
       tickAreaAura('frostAuraT', 1000, 150, fdmg, 0x50c8ff, '#70e8ff', true);
+    }
+    if (s.activeAuras.some((a) => a.def.auraTick === 'storm')) {
+      const sdmg = Math.max(4, Math.round((8 + s.int * 0.9 + state.level * 1.6) * s.spellPower));
+      tickAreaAura('stormAuraT', 1050, 160, sdmg, 0x60e8ff, '#88f0ff', false);
+    }
+    if (s.activeAuras.some((a) => a.def.auraTick === 'cataclysm')) {
+      const cdmg = Math.max(6, Math.round((12 + s.int * 1.2 + state.level * 2.0) * s.spellPower));
+      tickAreaAura('cataclysmAuraT', 850, 175, cdmg, 0xffaa28, '#ffd060', true);
     }
   }
 

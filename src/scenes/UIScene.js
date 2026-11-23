@@ -567,10 +567,15 @@ export default class UIScene extends Phaser.Scene {
       }
       if (item.kind !== 'book' && item.sockets > 0) {
         const sg = this.add.graphics();
-        const step = size < 60 ? 9 : 10;
-        const rad = size < 60 ? 3.2 : 3.8;
+        const twoRows = item.sockets > 3;
+        const step = size < 60 ? (twoRows ? 7.5 : 8) : (twoRows ? 8.5 : 9);
+        const rad = size < 60 ? (twoRows ? 2.4 : 2.8) : (twoRows ? 2.8 : 3.3);
+        const baseY = y + half - (twoRows ? 14 : 7);
         for (let k = 0; k < item.sockets; k++) {
-          const sx = x - half + 8 + k * step, sy = y + half - 8;
+          const col = twoRows ? (k % 3) : k;
+          const row = twoRows ? Math.floor(k / 3) : 0;
+          const sx = x - half + 7 + col * step;
+          const sy = baseY + row * 7.5;
           const rId = item.runes && item.runes[k];
           if (rId && RUNE_DEFS[rId]) {
             sg.fillStyle(RUNE_DEFS[rId].hex, 1).fillCircle(sx, sy, rad);
@@ -962,35 +967,40 @@ export default class UIScene extends Phaser.Scene {
       this.runeSlotBtns[slot] = { x: bx, y: by };
     });
 
-    // 選取裝備鑲嵌區
-    const box = this.add.rectangle(X + 207, Y + 140, 382, 66, 0x18110e).setStrokeStyle(1.5, 0x5c422c);
+    // 選取裝備鑲嵌區（支援 1~6 孔顯示）
+    const box = this.add.rectangle(X + 207, Y + 146, 382, 78, 0x18110e).setStrokeStyle(1.5, 0x5c422c);
     c.add(box);
     const target = sel ? sel.item : null;
     if (!target) {
-      c.add(txt(this, X + 207, Y + 140, '尚無可鑲嵌裝備（點選右側背包裝備或先穿上裝備）', 13, '#8a7a6a').setOrigin(0.5));
+      c.add(txt(this, X + 207, Y + 146, '尚無可鑲嵌裝備（點選右側背包裝備或先穿上裝備）', 13, '#8a7a6a').setOrigin(0.5));
     } else {
-      c.add(this.add.image(X + 46, Y + 140, 'icon_' + target.slot).setScale(0.68));
+      c.add(this.add.image(X + 46, Y + 146, 'icon_' + target.slot).setScale(0.68));
       const eqTag = sel.equipped ? ' [裝備中]' : '';
-      c.add(txt(this, X + 80, Y + 112, `${itemDisplayName(target)}${eqTag}`, 13, QUALITY_COLORS[target.quality]));
+      c.add(txt(this, X + 78, Y + 111, `${itemDisplayName(target)}${eqTag}`, 13, QUALITY_COLORS[target.quality]));
 
       const sockCount = target.sockets || 0;
       const fitted = target.runes || [];
       if (sockCount === 0) {
-        c.add(txt(this, X + 80, Y + 134, '此裝備無插孔（可至餘燼村鐵匠處花費打孔）', 11, '#a08878'));
+        c.add(txt(this, X + 78, Y + 136, '此裝備無插孔（可至餘燼村鐵匠處花費打孔）', 11, '#a08878'));
       } else {
         const sg = this.add.graphics();
+        const twoRows = sockCount > 3;
+        const rad = twoRows ? 4.5 : 5;
         for (let k = 0; k < sockCount; k++) {
-          const sx = X + 90 + k * 76, sy = Y + 138;
+          const col = twoRows ? (k % 3) : k;
+          const row = twoRows ? Math.floor(k / 3) : 0;
+          const sx = X + 86 + col * (twoRows ? 74 : 78);
+          const sy = twoRows ? (Y + 134 + row * 17) : (Y + 140);
           const rId = fitted[k];
           const rDef = rId && RUNE_DEFS[rId];
           if (rDef) {
-            sg.fillStyle(rDef.hex, 1).fillCircle(sx, sy, 5.5);
-            sg.lineStyle(1.5, 0xffffff, 0.9).strokeCircle(sx, sy, 5.5);
-            c.add(txt(this, sx + 9, sy - 6, rDef.name, 11, rDef.color));
+            sg.fillStyle(rDef.hex, 1).fillCircle(sx, sy, rad);
+            sg.lineStyle(1.5, 0xffffff, 0.9).strokeCircle(sx, sy, rad);
+            c.add(txt(this, sx + 8, sy - 6, rDef.name, 11, rDef.color));
           } else {
-            sg.fillStyle(0x0a0808, 1).fillCircle(sx, sy, 5.5);
-            sg.lineStyle(1.5, 0x8a7866, 0.9).strokeCircle(sx, sy, 5.5);
-            c.add(txt(this, sx + 9, sy - 6, '空槽', 11, '#706050'));
+            sg.fillStyle(0x0a0808, 1).fillCircle(sx, sy, rad);
+            sg.lineStyle(1.5, 0x8a7866, 0.9).strokeCircle(sx, sy, rad);
+            c.add(txt(this, sx + 8, sy - 6, '空槽', 11, '#706050'));
           }
         }
         c.add(sg);
@@ -1001,7 +1011,7 @@ export default class UIScene extends Phaser.Scene {
         ? `✦ ${rw.name}：${rw.short}`
         : sockCount > fitted.length ? '點擊下方符文袋中的符文即可鑲嵌'
           : sockCount > 0 ? '插孔已滿（重鑄可保留符文；取出需花費金幣）' : '';
-      if (rwLine) c.add(txt(this, X + 80, Y + 154, rwLine, 11, rw ? rw.color : '#8a7a6a'));
+      if (rwLine) c.add(txt(this, X + 78, Y + 166, rwLine, 10.5, rw ? rw.color : '#8a7a6a'));
 
       if (fitted.length > 0) {
         const uCost = 30 * fitted.length;
@@ -1024,24 +1034,24 @@ export default class UIScene extends Phaser.Scene {
     }
 
     // 符文袋（2x4）
-    c.add(txt(this, X + 20, Y + 180, '符文袋（點擊鑲嵌至上方選取裝備）', 12, '#d0b0ff'));
+    c.add(txt(this, X + 20, Y + 190, '符文袋（點擊鑲嵌至上方選取裝備）', 12, '#d0b0ff'));
     const shortBonuses = {
       blood: '吸血 +4%', thorn: '反傷 +25%', wind: '移速 +8%', flame: '攻擊 +8',
       frost: '防+6 血+25', arcane: 'CD-5% 魔+20', crit: '爆+5% 傷+15%', holy: '減傷5% 血+35',
     };
     RUNE_LIST.forEach((r, idx) => {
       const col = idx % 4, row = Math.floor(idx / 4);
-      const cx = X + 64 + col * 95, cy = Y + 224 + row * 56;
+      const cx = X + 64 + col * 95, cy = Y + 231 + row * 50;
       const cnt = (state.runes && state.runes[r.id]) || 0;
-      const b = this.add.rectangle(cx, cy, 90, 50, cnt > 0 ? 0x1c1620 : 0x100d10)
+      const b = this.add.rectangle(cx, cy, 90, 46, cnt > 0 ? 0x1c1620 : 0x100d10)
         .setStrokeStyle(1.5, cnt > 0 ? r.hex : 0x3a3038).setInteractive({ useHandCursor: cnt > 0 });
       c.add(b);
-      const ic = this.add.image(cx - 24, cy - 7, `rune_${r.id}`).setScale(0.64);
+      const ic = this.add.image(cx - 24, cy - 6, `rune_${r.id}`).setScale(0.62);
       if (cnt === 0) ic.setAlpha(0.35);
       c.add(ic);
-      c.add(txt(this, cx - 5, cy - 20, r.name, 12, cnt > 0 ? r.color : '#685c66'));
-      c.add(txt(this, cx + 41, cy - 20, `x${cnt}`, 11, cnt > 0 ? '#ffffff' : '#685c66').setOrigin(1, 0));
-      c.add(txt(this, cx, cy + 14, shortBonuses[r.id] || r.desc, 10, cnt > 0 ? '#d8c8d8' : '#584e58').setOrigin(0.5));
+      c.add(txt(this, cx - 5, cy - 19, r.name, 12, cnt > 0 ? r.color : '#685c66'));
+      c.add(txt(this, cx + 41, cy - 19, `x${cnt}`, 11, cnt > 0 ? '#ffffff' : '#685c66').setOrigin(1, 0));
+      c.add(txt(this, cx, cy + 13, shortBonuses[r.id] || r.desc, 10, cnt > 0 ? '#d8c8d8' : '#584e58').setOrigin(0.5));
       this.runeBagBtns[r.id] = { x: cx, y: cy };
       b.on('pointerdown', () => {
         if (!target) { Sfx.play('denied'); this.game_.msg('請先選取一件裝備', '#ff8080'); return; }
@@ -1064,26 +1074,26 @@ export default class UIScene extends Phaser.Scene {
       });
     });
 
-    // 符文光環配方（每頁 4 條）
+    // 符文光環配方（每頁 4 條，支援 2~6 符文組合）
     const totalPages = Math.ceil(RUNEWORD_LIST.length / 4);
     this.runeRecipePage = Phaser.Math.Clamp(this.runeRecipePage || 0, 0, totalPages - 1);
-    c.add(txt(this, X + 20, Y + 314, `符文光環配方（第 ${this.runeRecipePage + 1}/${totalPages} 頁）`, 12, '#ffe080'));
-    const prev = txt(this, X + 344, Y + 314, '◀', 14, '#ffd080').setInteractive({ useHandCursor: true });
-    const next = txt(this, X + 372, Y + 314, '▶', 14, '#ffd080').setInteractive({ useHandCursor: true });
+    c.add(txt(this, X + 20, Y + 312, `符文光環配方（第 ${this.runeRecipePage + 1}/${totalPages} 頁）`, 12, '#ffe080'));
+    const prev = txt(this, X + 344, Y + 312, '◀', 14, '#ffd080').setInteractive({ useHandCursor: true });
+    const next = txt(this, X + 372, Y + 312, '▶', 14, '#ffd080').setInteractive({ useHandCursor: true });
     prev.on('pointerdown', () => { this.runeRecipePage = (this.runeRecipePage + totalPages - 1) % totalPages; Sfx.play('click'); this.refreshPanel(); });
     next.on('pointerdown', () => { this.runeRecipePage = (this.runeRecipePage + 1) % totalPages; Sfx.play('click'); this.refreshPanel(); });
     c.add([prev, next]);
 
     const slice = RUNEWORD_LIST.slice(this.runeRecipePage * 4, (this.runeRecipePage + 1) * 4);
     slice.forEach((rw, idx) => {
-      const ry = Y + 336 + idx * 38;
+      const ry = Y + 334 + idx * 41;
       const haveMap = { ...(state.runes || {}) };
       const canMake = rw.runes.every((rid) => (haveMap[rid] || 0) > 0 && (haveMap[rid]--, true));
-      c.add(this.add.rectangle(X + 207, ry + 16, 380, 33, canMake ? 0x1a2018 : 0x141012).setStrokeStyle(1, canMake ? rw.hex : 0x3a2c24));
-      const combo = rw.runes.map((rid) => RUNE_DEFS[rid].name).join(' + ');
-      c.add(txt(this, X + 26, ry + 2, `${rw.name}  [${combo}]`, 12, rw.color));
-      if (canMake) c.add(txt(this, X + 388, ry + 2, '可合成', 11, '#80ff90').setOrigin(1, 0));
-      c.add(txt(this, X + 26, ry + 17, rw.short, 11, '#c8d8d0'));
+      c.add(this.add.rectangle(X + 207, ry + 18, 380, 37, canMake ? 0x1a2018 : 0x141012).setStrokeStyle(1, canMake ? rw.hex : 0x3a2c24));
+      const combo = rw.runes.map((rid) => RUNE_DEFS[rid].glyph).join('+');
+      c.add(txt(this, X + 26, ry + 3, `[${rw.runes.length}符] ${rw.name}  [${combo}]`, 11, rw.color));
+      if (canMake) c.add(txt(this, X + 388, ry + 3, '可合成', 11, '#80ff90').setOrigin(1, 0));
+      c.add(txt(this, X + 26, ry + 19, rw.short, 10, '#c8d8d0'));
     });
   }
 
@@ -1178,7 +1188,7 @@ export default class UIScene extends Phaser.Scene {
         const cvCost = convertSetPieceCost(it);
         const canConv = state.gold >= cvCost.gold && (state.setEssence || 0) >= cvCost.essence;
         this.forgeBtns.convertSet = this.mkModalBtn(c, RX + 98, Y + 240, 192, 30,
-          `轉換同套部位 (${cvCost.gold}金+1精華)`,
+          `轉換同套部位 (${cvCost.gold}金+${cvCost.essence}精華)`,
           canConv ? 0x163826 : 0x201816, canConv ? 0x38f288 : 0x4a3c36, () => {
             if (!canConv) { Sfx.play('denied'); this.game_.msg('金幣或套裝精華不足', '#ff8080'); return; }
             if (selected.equipped) {
@@ -1204,8 +1214,9 @@ export default class UIScene extends Phaser.Scene {
       let sy2 = Y + 138;
       const rw = getItemRuneword(it);
       const sockLine = `插孔：${(it.runes || []).length}/${it.sockets || 0}${rw ? ` · ✦${rw.name}` : `（上限 ${MAX_SOCKETS}）`}`;
-      c.add(txt(this, RX + 224, sy2, sockLine, 13, rw ? rw.color : '#80e8d0'));
-      sy2 += 22;
+      const sockTxt = txt(this, RX + 224, sy2, sockLine, 13, rw ? rw.color : '#80e8d0', { wordWrap: { width: 350, useAdvancedWrap: true } });
+      c.add(sockTxt);
+      sy2 += sockTxt.height + 6;
       if (it.specials && it.specials.length) {
         for (const af of it.specials) {
           c.add(txt(this, RX + 224, sy2, `★ ${formatSpecialAffix(af)}`, 13, '#ffb060'));
@@ -1375,7 +1386,7 @@ export default class UIScene extends Phaser.Scene {
         canNorm ? 0x1c324a : 0x201816, canNorm ? 0x6aa8ff : 0x50403a, () => {
           if (!canNorm) { Sfx.play('denied'); return; }
           state.gold -= nCost.gold;
-          const qual = Math.random() < 0.28 ? 'gold' : 'blue';
+          const qual = Math.random() < 0.18 ? 'gold' : 'blue';
           const item = generateItem(ilvl, 0.25, qual, this.forgeSlot);
           state.inventory.push(item);
           this.forgeSelectedId = item.id;
@@ -1391,7 +1402,7 @@ export default class UIScene extends Phaser.Scene {
           if (!canLeg) { Sfx.play('denied'); return; }
           state.gold -= lCost.gold;
           state.shards -= lCost.shards;
-          const qual = Math.random() < 0.25 ? 'special' : 'gold';
+          const qual = Math.random() < 0.12 ? 'special' : 'gold';
           const item = generateItem(ilvl + 1, 0.4, qual, this.forgeSlot);
           state.inventory.push(item);
           this.forgeSelectedId = item.id;
@@ -1522,11 +1533,11 @@ export default class UIScene extends Phaser.Scene {
       if ((item.sockets || 0) > 0) {
         const fitted = item.runes || [];
         const rStr = fitted.length ? fitted.map((r) => RUNE_DEFS[r]?.name || r).join('、') : '空';
-        lines.push([`插孔 (${fitted.length}/${item.sockets})：${rStr}`, '#80e8ff', 13]);
+        lines.push([`插孔 (${fitted.length}/${item.sockets})：${rStr}`, '#80e8ff', 13, { wordWrap: { width: 390, useAdvancedWrap: true } }]);
         const rw = getItemRuneword(item);
         if (rw) {
           lines.push([`✦ 符文光環：【${rw.name}】`, rw.color, 14]);
-          lines.push([`  ${rw.desc}`, '#d0f8e8', 12]);
+          lines.push([`  ${rw.desc}`, '#d0f8e8', 12, { wordWrap: { width: 390, useAdvancedWrap: true } }]);
         }
       }
       const eq = state.equipment[item.slot];
