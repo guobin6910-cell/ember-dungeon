@@ -41,6 +41,38 @@ export const ENEMY_TYPES = {
     name: '地城毒蛛', tex: 'spider', w: 42, h: 36, r: 10, foot: 10,
     hp: 28, dmg: 8, speed: 128, range: 18, webRange: 250, webCd: 4200, atkCd: 1050, windup: 260, xp: 15, gold: [3, 8], drop: 0.16, bookDrop: 0.04,
   },
+  hellhound: {
+    name: '焦炎獵犬', tex: 'hellhound', w: 42, h: 30, r: 10, foot: 9,
+    hp: 26, dmg: 9, speed: 152, range: 86, lunge: true, lungeSpd: 440, burnSpark: true, atkCd: 1350, windup: 340, xp: 15, gold: [3, 8], drop: 0.15, bookDrop: 0.04, debrisColor: 0xff7020,
+  },
+  bone_guard: {
+    name: '骸骨盾衛', tex: 'bone_guard', w: 36, h: 48, r: 12, foot: 12,
+    hp: 58, dmg: 11, speed: 74, range: 22, shieldDr: 0.3, bashSlow: 900, atkCd: 1450, windup: 440, xp: 20, gold: [4, 10], drop: 0.2, bookDrop: 0.05, debrisColor: 0xd8d0b8,
+  },
+  blood_cultist: {
+    name: '血月祭司', tex: 'blood_cultist', w: 36, h: 48, r: 11, foot: 12,
+    hp: 36, dmg: 9, speed: 76, ranged: true, bolt: 'blood', range: 350, keep: 195, healCd: 5200, healAmt: 0.24, atkCd: 2050, windup: 500, xp: 24, gold: [5, 13], drop: 0.22, bookDrop: 0.06, debrisColor: 0xc01830,
+  },
+  ghoul: {
+    name: '狂血食屍鬼', tex: 'ghoul', w: 36, h: 48, r: 11, foot: 12,
+    hp: 40, dmg: 10, speed: 112, range: 18, lifesteal: 0.4, berserk: true, atkCd: 980, windup: 260, xp: 18, gold: [3, 10], drop: 0.17, bookDrop: 0.04, debrisColor: 0xb82038,
+  },
+  frost_wraith: {
+    name: '寒霜幽靈', tex: 'frost_wraith', w: 36, h: 48, r: 10, foot: 12,
+    hp: 30, dmg: 11, speed: 94, ranged: true, bolt: 'ice_twin', range: 340, keep: 180, blinkCd: 4600, ghostly: true, atkCd: 1750, windup: 440, xp: 23, gold: [5, 12], drop: 0.21, bookDrop: 0.06, debrisColor: 0x70e0ff,
+  },
+  pyro_demon: {
+    name: '烈焰惡魔', tex: 'pyro_demon', w: 36, h: 48, r: 11, foot: 12,
+    hp: 46, dmg: 14, speed: 84, ranged: true, bolt: 'firebomb', range: 360, keep: 195, atkCd: 2400, windup: 560, xp: 28, gold: [6, 15], drop: 0.24, bookDrop: 0.07, debrisColor: 0xff5010,
+  },
+  blood_knight: {
+    name: '精英血月騎士', tex: 'blood_knight', w: 64, h: 64, r: 18, foot: 18, elite: true, auraTint: 0xd81838, slamColor: 0xd81838,
+    hp: 225, dmg: 20, speed: 102, range: 28, slam: 86, eliteChargeCd: 4600, lifesteal: 0.35, atkCd: 1850, windup: 620, xp: 88, gold: [20, 42], drop: 0.88, bookDrop: 0.25, debrisColor: 0xd01838,
+  },
+  frost_titan: {
+    name: '精英冰晶巨像', tex: 'frost_titan', w: 64, h: 64, r: 19, foot: 20, elite: true, auraTint: 0x40d0ff, slamColor: 0x40d0ff,
+    hp: 250, dmg: 20, speed: 78, range: 28, slam: 100, frostRing: true, deathFrostNova: true, atkCd: 2150, windup: 740, xp: 92, gold: [22, 44], drop: 0.9, bookDrop: 0.26, debrisColor: 0x70e8ff,
+  },
   dummy: {
     name: '訓練木樁', tex: 'dummy', w: 36, h: 36, r: 12, foot: 10, isDummy: true,
     hp: 999999, dmg: 0, speed: 0, range: 0, atkCd: 99999, windup: 0, xp: 0, gold: [0, 0], drop: 0, bookDrop: 0,
@@ -68,7 +100,8 @@ export default class Enemy {
     this.shadow = scene.add.image(x, y, 'shadowtex').setScale(T.r / 13, T.r / 34).setDepth(2);
     if (T.elite || this.isDummy) {
       if (T.elite) {
-        this.aura = scene.add.image(x, y, 'glow').setTint(type === 'golem' ? 0xff5010 : 0xffa020)
+        const auraTint = T.auraTint ?? (type === 'golem' ? 0xff5010 : 0xffa020);
+        this.aura = scene.add.image(x, y, 'glow').setTint(auraTint)
           .setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.45).setScale(1.2, 0.5).setDepth(2);
       }
       this.label = scene.add.text(x, y - T.h / 2 - 22, T.name, {
@@ -77,6 +110,7 @@ export default class Enemy {
       }).setOrigin(0.5).setDepth(9450);
     }
     this.sprite = scene.physics.add.sprite(x, y - T.foot, T.tex);
+    if (T.ghostly) this.sprite.setAlpha(0.88);
     this.syncBody();
     if (this.isDummy) this.sprite.body.immovable = true;
     this.sprite.enemy = this;
@@ -87,6 +121,9 @@ export default class Enemy {
     this.atkT = rand(200, 900);
     this.webT = T.webCd ? rand(1000, T.webCd) : 0;
     this.summonT = T.summonCd ? rand(2500, T.summonCd) : 0;
+    this.healT = T.healCd ? rand(1800, T.healCd) : 0;
+    this.blinkT = T.blinkCd ? rand(800, 2200) : 0;
+    this.chargeT = T.eliteChargeCd ? rand(1800, T.eliteChargeCd) : 0;
     this.summons = [];
     this.wind = null;
     this.path = null;
@@ -96,6 +133,8 @@ export default class Enemy {
     this.flashT = 0;
     this.slowT = 0;
     this._wasSlow = false;
+    this.enraged = false;
+    this.rush = null;
     this.knock = null;
     this.dead = false;
     this.walkT = Math.random() * 1000;
@@ -216,6 +255,7 @@ export default class Enemy {
       this.flashT -= dt;
       if (this.flashT <= 0) {
         if (this.slowT > 0) this.sprite.setTint(0x70d0ff);
+        else if (this.enraged) this.sprite.setTint(0xff6868);
         else this.sprite.clearTint();
       }
     } else {
@@ -223,6 +263,7 @@ export default class Enemy {
       if (slow !== this._wasSlow) {
         this._wasSlow = slow;
         if (slow) this.sprite.setTint(0x70d0ff);
+        else if (this.enraged) this.sprite.setTint(0xff6868);
         else this.sprite.clearTint();
       }
     }
@@ -232,6 +273,15 @@ export default class Enemy {
       body.setVelocity(0, 0);
       this.sprite.setDepth(this.fy);
       return;
+    }
+
+    // 狂暴食屍鬼低血量狂暴化
+    if (T.berserk && !this.enraged && this.hp < this.maxHp * 0.5) {
+      this.enraged = true;
+      this.speed = Math.round(T.speed * 1.45);
+      if (this.flashT <= 0 && this.slowT <= 0) this.sprite.setTint(0xff6868);
+      sc.burst(this.fx, this.fy - 6, 12, [0xff3040, 0xff8060], 110, 320);
+      sc.floatText(this.fx, this.sprite.y - 24, '狂暴！', '#ff5050', 14);
     }
 
     this.slowT = Math.max(0, this.slowT - dt);
@@ -281,7 +331,86 @@ export default class Enemy {
       }
     }
 
-    if (this.knock) {
+    // 血月祭司治療負傷友軍
+    if (T.healCd && this.aggro && !p.dead && !this.wind && !this.knock && !this.rush) {
+      this.healT -= dt;
+      if (this.healT <= 0) {
+        let best = null, lowest = 0.92;
+        for (const ally of sc.enemies) {
+          if (ally === this || ally.dead || ally.isDummy) continue;
+          const frac = ally.hp / ally.maxHp;
+          if (frac < lowest && Math.hypot(ally.fx - this.fx, ally.fy - this.fy) <= 280) {
+            lowest = frac;
+            best = ally;
+          }
+        }
+        if (best) {
+          this.healT = T.healCd;
+          const heal = best.isBoss
+            ? Math.max(1, Math.round(best.maxHp * 0.03))
+            : Math.max(2, Math.round(best.maxHp * (T.healAmt || 0.24)));
+          best.hp = Math.min(best.maxHp, best.hp + heal);
+          const beam = sc.add.graphics().setDepth(9200);
+          beam.lineStyle(3, 0xff5070, 0.85).lineBetween(this.fx, this.sprite.y, best.fx, best.sprite.y);
+          sc.tweens.add({ targets: beam, alpha: 0, duration: 320, onComplete: () => beam.destroy() });
+          sc.burst(best.fx, best.fy - 8, 8, [0xff4060, 0xffa0b0], 80, 300);
+          sc.floatText(best.fx, best.sprite.y - 20, `+${heal}`, '#ff7090', 14);
+          sc.sfx('heal');
+        } else {
+          this.healT = 900;
+        }
+      }
+    }
+
+    // 寒霜幽靈近身相位瞬移
+    if (T.blinkCd && this.aggro && !p.dead && !this.wind && !this.knock && !this.rush) {
+      this.blinkT -= dt;
+      if (this.blinkT <= 0 && dist < 130) {
+        const away = Math.atan2(this.fy - p.fy, this.fx - p.fx);
+        for (let k = 0; k < 10; k++) {
+          const ang = away + (Math.random() - 0.5) * 2.1;
+          const rDist = rand(115, 165);
+          const bx = this.fx + Math.cos(ang) * rDist;
+          const by = this.fy + Math.sin(ang) * rDist;
+          if (sc.dungeon.walkableAt(bx, by) && Math.hypot(bx - p.fx, by - p.fy) > 105) {
+            sc.burst(this.fx, this.fy - 8, 10, [0x60d8ff, 0xd0f8ff], 110, 320);
+            this.sprite.setPosition(bx, by - T.foot);
+            sc.burst(bx, by - 8, 10, [0x60d8ff, 0xd0f8ff], 110, 320);
+            sc.sfx('blink');
+            this.blinkT = T.blinkCd;
+            this.path = null;
+            break;
+          }
+        }
+      }
+    }
+
+    // 精英血月騎士直線衝鋒
+    if (T.eliteChargeCd && this.aggro && !p.dead && !this.wind && !this.knock && !this.rush) {
+      this.chargeT -= dt;
+      if (this.chargeT <= 0 && dist > 110 && dist < 275 && sc.dungeon.lineClear(this.fx, this.fy, p.fx, p.fy, T.r * 0.7)) {
+        this.chargeT = T.eliteChargeCd;
+        this.startChargeWind(Math.atan2(dy, dx));
+      }
+    }
+
+    if (this.rush) {
+      body.setVelocity(this.rush.vx, this.rush.vy);
+      if (!this.rush.hit && Math.hypot(p.fx - this.fx, p.fy - this.fy) < T.r + PLAYER_R + 10) {
+        this.rush.hit = true;
+        const dealt = sc.hurtPlayer(this.dmg * 1.15, this.fx, this.fy, this);
+        if (T.lifesteal && dealt > 0) {
+          const heal = Math.max(1, Math.round(dealt * T.lifesteal));
+          this.hp = Math.min(this.maxHp, this.hp + heal);
+          sc.floatText(this.fx, this.sprite.y - 16, `+${heal}`, '#ff7090', 14);
+        }
+      }
+      this.rush.t -= dt;
+      if (this.rush.t <= 0) {
+        this.rush = null;
+        body.setVelocity(0, 0);
+      }
+    } else if (this.knock) {
       body.setVelocity(this.knock.vx, this.knock.vy);
       this.knock.t -= dt;
       if (this.knock.t <= 0) this.knock = null;
@@ -346,33 +475,79 @@ export default class Enemy {
     if (this.atkT <= 0 && dist <= this.T.range) this.startWind();
   }
 
+  startChargeWind(ang) {
+    const sc = this.scene;
+    const len = 240;
+    const tx = this.fx + Math.cos(ang) * len, ty = this.fy + Math.sin(ang) * len;
+    const lane = sc.add.graphics().setDepth(3);
+    lane.lineStyle(38, 0xd81838, 0.28).lineBetween(this.fx, this.fy, tx, ty);
+    lane.lineStyle(2, 0xff6080, 0.88).lineBetween(this.fx, this.fy, tx, ty);
+    this.wind = { kind: 'charge', t: 520, dur: 520, ang, lane };
+    this.facing = Math.cos(ang) >= 0 ? 1 : -1;
+    this.sprite.setTint(0xff4060);
+  }
+
   startWind() {
     const T = this.T;
     this.wind = { t: T.windup, dur: T.windup };
     if (T.slam) {
-      this.wind.tele = this.scene.add.circle(this.fx, this.fy, T.slam, 0xff2000, 0.3).setStrokeStyle(2, 0xff6020, 0.9).setDepth(3);
+      const col = T.slamColor || 0xff2000;
+      this.wind.tele = this.scene.add.circle(this.fx, this.fy, T.slam, col, 0.28).setStrokeStyle(2, col, 0.9).setDepth(3);
     }
-    if (T.ranged) this.sprite.setTint(T.bolt === 'ice' ? 0x90f0ff : T.bolt === 'orb' ? 0xd080ff : 0xb0ffb0);
-    if (T.lunge) this.sprite.setTint(0xff6090);
+    if (T.ranged) {
+      const col = T.bolt === 'firebomb' ? 0xff9040
+        : T.bolt === 'blood' ? 0xff5070
+          : (T.bolt === 'ice' || T.bolt === 'ice_twin') ? 0x90f0ff
+            : T.bolt === 'orb' ? 0xd080ff : 0xb0ffb0;
+      this.sprite.setTint(col);
+    }
+    if (T.lunge) this.sprite.setTint(T.burnSpark ? 0xff9030 : 0xff6090);
   }
 
   release() {
     const sc = this.scene, p = sc.player, T = this.T;
-    const tele = this.wind.tele;
+    const wind = this.wind;
+    const tele = wind?.tele;
+    const lane = wind?.lane;
     this.wind = null;
-    this.atkT = T.atkCd * (0.85 + Math.random() * 0.3);
+    this.atkT = T.atkCd * (0.85 + Math.random() * 0.3) * (this.enraged ? 0.7 : 1);
     this.sprite.setScale(1);
     if (!this.flashT) {
       if (this.slowT > 0) this.sprite.setTint(0x70d0ff);
+      else if (this.enraged) this.sprite.setTint(0xff6868);
       else this.sprite.clearTint();
     }
-    if (this.dead) { if (tele) tele.destroy(); return; }
+    if (this.dead) {
+      if (tele && tele.active) tele.destroy();
+      if (lane && lane.active) lane.destroy();
+      return;
+    }
+    if (wind?.kind === 'charge') {
+      if (lane && lane.active) lane.destroy();
+      const ang = wind.ang;
+      sc.sfx('dash');
+      this.rush = { vx: Math.cos(ang) * 560, vy: Math.sin(ang) * 560, t: 310, hit: false };
+      return;
+    }
     const dx = p.fx - this.fx, dy = p.fy - this.fy;
     const dist = Math.hypot(dx, dy) || 1;
     if (T.slam) {
-      tele.destroy();
-      sc.slamEffect(this.fx, this.fy, T.slam);
-      if (dist <= T.slam + PLAYER_R) sc.hurtPlayer(this.dmg, this.fx, this.fy, this);
+      if (tele && tele.active) tele.destroy();
+      sc.slamEffect(this.fx, this.fy, T.slam, T.slamColor || 0xff8030);
+      if (dist <= T.slam + PLAYER_R) {
+        const dealt = sc.hurtPlayer(this.dmg, this.fx, this.fy, this);
+        if (T.frostRing && dealt > 0) p.applySlow(1800);
+        if (T.lifesteal && dealt > 0) {
+          const heal = Math.max(1, Math.round(dealt * T.lifesteal));
+          this.hp = Math.min(this.maxHp, this.hp + heal);
+          sc.floatText(this.fx, this.sprite.y - 16, `+${heal}`, '#ff7090', 14);
+        }
+      }
+      if (T.frostRing) {
+        for (let i = 0; i < 6; i++) {
+          sc.spawnIceBolt(this.fx, this.fy - 10, (i / 6) * Math.PI * 2, Math.max(2, Math.round(this.dmg * 0.55)), this, { speed: 225, silent: i > 0 });
+        }
+      }
     } else if (T.ranged) {
       const lead = 0.25;
       const tx = p.fx + p.sprite.body.velocity.x * lead * Math.random();
@@ -380,19 +555,36 @@ export default class Enemy {
       const ang = Math.atan2(ty - this.fy, tx - this.fx);
       if (T.bolt === 'ice') {
         for (const off of [-0.22, 0, 0.22]) sc.spawnIceBolt(this.fx, this.fy - 10, ang + off, this.dmg, this);
+      } else if (T.bolt === 'ice_twin') {
+        sc.spawnIceBolt(this.fx, this.fy - 10, ang - 0.08, Math.max(2, Math.round(this.dmg * 0.72)), this, { speed: 295 });
+        sc.spawnIceBolt(this.fx, this.fy - 10, ang + 0.08, Math.max(2, Math.round(this.dmg * 0.72)), this, { speed: 295, silent: true });
+      } else if (T.bolt === 'blood') {
+        sc.spawnOrb(this.fx, this.fy - 10, ang, this.dmg, 'bloodbolt', this, { speed: 255 });
+      } else if (T.bolt === 'firebomb') {
+        const bx = sc.dungeon.walkableAt(tx, ty) ? tx : p.fx;
+        const by = sc.dungeon.walkableAt(tx, ty) ? ty : p.fy;
+        sc.sfx('fireball');
+        const fb = sc.add.image(this.fx, this.fy - 14, 'fireball').setScale(1.05).setBlendMode(Phaser.BlendModes.ADD).setDepth(9200);
+        sc.tweens.add({ targets: fb, x: bx, y: by - 6, duration: 520, ease: 'Sine.Out', onComplete: () => { if (fb.active) fb.destroy(); } });
+        sc.telegraph(bx, by, 58, 720, () => {
+          if (Math.hypot(sc.player.fx - bx, sc.player.fy - by) < 58 + PLAYER_R) sc.hurtPlayer(this.dmg * 1.1, bx, by, this);
+        }, 0xff5810, true);
       } else if (T.bolt === 'orb') {
         sc.spawnOrb(this.fx, this.fy - 10, ang, this.dmg, 'orb', this);
       } else {
         sc.spawnArrow(this.fx, this.fy - 10, ang, this.dmg, this);
       }
     } else if (T.lunge) {
-      this.knock = { vx: (dx / dist) * 420, vy: (dy / dist) * 420, t: 160 };
+      const lSpd = T.lungeSpd || 420;
+      this.knock = { vx: (dx / dist) * lSpd, vy: (dy / dist) * lSpd, t: 160 };
       sc.sfx('dash');
+      if (T.burnSpark) sc.burst(this.fx, this.fy - 4, 8, [0xff8020, 0xffe060], 130, 280);
       if (dist <= 120) sc.hurtPlayer(this.dmg, this.fx, this.fy, this);
     } else {
       this.scene.tweens.add({ targets: this.sprite, x: this.sprite.x + (dx / dist) * 8, duration: 70, yoyo: true });
       if (dist - T.r - PLAYER_R <= T.range + 16) {
         const dealt = sc.hurtPlayer(this.dmg, this.fx, this.fy, this);
+        if (T.bashSlow && dealt > 0) p.applySlow(T.bashSlow);
         if (T.lifesteal && dealt > 0) {
           const heal = Math.max(1, Math.round(dealt * T.lifesteal));
           this.hp = Math.min(this.maxHp, this.hp + heal);
@@ -408,6 +600,7 @@ export default class Enemy {
     this.shadow.destroy();
     if (this.aura) this.aura.destroy();
     if (this.label) this.label.destroy();
-    if (this.wind && this.wind.tele) this.wind.tele.destroy();
+    if (this.wind && this.wind.tele && this.wind.tele.active) this.wind.tele.destroy();
+    if (this.wind && this.wind.lane && this.wind.lane.active) this.wind.lane.destroy();
   }
 }

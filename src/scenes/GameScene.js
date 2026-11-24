@@ -4,7 +4,7 @@ import { generateDungeon, generateVillage } from '../systems/dungeon.js';
 import { PathFinder } from '../systems/pathfinding.js';
 import { Sfx } from '../systems/audio.js';
 import Player, { PLAYER_R } from '../entities/Player.js';
-import Enemy from '../entities/Enemy.js';
+import Enemy, { ENEMY_TYPES } from '../entities/Enemy.js';
 import Boss from '../entities/Boss.js';
 import {
   state, resetState, getStats, getEffectiveSkillLevel, addXp, INV_SIZE, setVfxEnabled,
@@ -83,6 +83,7 @@ export default class GameScene extends Phaser.Scene {
     this.auraGfx = this.add.graphics().setDepth(3);
     this.shieldGfx = this.add.graphics().setDepth(9150);
     this.groundEffects = [];
+    this.hostileHazards = [];
     this.orbitBlades = [];
     this.burnAuraT = 0;
     this.frostAuraT = 0;
@@ -212,6 +213,7 @@ export default class GameScene extends Phaser.Scene {
         this.vfx?.destroyWhirlVisuals(this.whirl);
         this.whirl = null;
       }
+      this.clearHostileHazards();
       this.vfx?.destroy();
     });
     Sfx.startAmbient();
@@ -986,7 +988,7 @@ export default class GameScene extends Phaser.Scene {
         for (let k = 0; k < n; k++) list.push(pick(starterPool));
         roomAggroDist = 255;
       } else if (this.floor === 1 && i === 2) {
-        const earlyPool = ['skeleton', 'archer', 'bat'];
+        const earlyPool = ['skeleton', 'archer', 'bat', 'hellhound'];
         for (let k = 0; k < 3; k++) list.push(pick(earlyPool));
       } else {
         const baseMin = this.floor === 1 && i === 3 ? 2 : 3;
@@ -998,7 +1000,7 @@ export default class GameScene extends Phaser.Scene {
         if (!room.branch && this.floor > 1 && i >= 6) list.push(pick(biome.elites));
       }
       for (const type of list) {
-        const p = d.randomFloorInRoom(room, (room.boss || type === 'gargoyle') ? 2 : 1);
+        const p = d.randomFloorInRoom(room, (room.boss || ENEMY_TYPES[type]?.elite) ? 2 : 1);
         const en = this.spawnEnemy(type, p.x, p.y, this.floor === 1 && i === 1 ? 1 : lvl);
         if (roomAggroDist) en.aggroDist = roomAggroDist;
       }
@@ -1045,6 +1047,7 @@ export default class GameScene extends Phaser.Scene {
     for (const pr of this.projectiles.slice()) {
       if (pr.hostile) this.removeProjectile(pr);
     }
+    this.clearHostileHazards();
     this.cameras.main.shake(1200, 0.012);
     this.cameras.main.flash(600, 255, 200, 120);
     this.sfx('explode');
@@ -1076,19 +1079,45 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
-  spawnOrb(x, y, ang, dmg, tex = 'orb', owner = null) {
-    const s = this.add.image(x, y, tex).setScale(1.1).setBlendMode(Phaser.BlendModes.ADD);
+  spawnOrb(x, y, ang, dmg, tex = 'orb', owner = null, opt = {}) {
+    const speed = opt.speed ?? 230;
+    const scale = opt.scale ?? 1.1;
+    const curve = opt.curve ?? 0;
+    const s = this.add.image(x, y, tex).setScale(scale).setBlendMode(Phaser.BlendModes.ADD);
     this.projectiles.push({
-      sprite: s, x, y, vx: Math.cos(ang) * 230, vy: Math.sin(ang) * 230, dmg, owner, hostile: true, life: 3200, r: 9, light: 70,
-      onUpdate: (pr) => pr.sprite.setScale(1 + Math.sin(this.time.now * 0.02) * 0.15),
+      sprite: s, x, y, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
+      dmg, owner, hostile: true, life: opt.life ?? 3200, r: opt.r ?? 9, light: 70, slow: opt.slow ?? 0,
+      onUpdate: (pr, dt) => {
+        if (curve) {
+          const rot = curve * (dt / 1000);
+          const c = Math.cos(rot), sn = Math.sin(rot);
+          const nvx = pr.vx * c - pr.vy * sn;
+          const nvy = pr.vx * sn + pr.vy * c;
+          pr.vx = nvx; pr.vy = nvy;
+        }
+        pr.sprite.setScale(scale * (1 + Math.sin(this.time.now * 0.02) * 0.15));
+      },
     });
   }
 
-  spawnIceBolt(x, y, ang, dmg, owner = null) {
-    const s = this.add.image(x, y, 'icebolt').setScale(1.05).setBlendMode(Phaser.BlendModes.ADD);
-    this.sfx('frost');
+  spawnIceBolt(x, y, ang, dmg, owner = null, opt = {}) {
+    const speed = opt.speed ?? 260;
+    const scale = opt.scale ?? 1.05;
+    const s = this.add.image(x, y, 'icebolt').setScale(scale).setBlendMode(Phaser.BlendModes.ADD);
+    if (!opt.silent) this.sfx('frost');
     this.projectiles.push({
-      sprite: s, x, y, vx: Math.cos(ang) * 260, vy: Math.sin(ang) * 260, dmg, owner, hostile: true, slow: 1800, life: 2800, r: 8, light: 65,
+      sprite: s, x, y, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
+      dmg, owner, hostile: true, slow: opt.slow ?? 1800, life: opt.life ?? 2800, r: opt.r ?? 8, light: 65,
+    });
+  }
+
+  spawnBoneSpear(x, y, ang, dmg, owner = null, opt = {}) {
+    const speed = opt.speed ?? 390;
+    const s = this.add.image(x, y, 'bonespear').setRotation(ang).setScale(opt.scale ?? 1.15).setDepth(y + 20);
+    if (!opt.silent) this.sfx('arrow');
+    this.projectiles.push({
+      sprite: s, x, y, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
+      dmg, owner, hostile: true, life: opt.life ?? 1900, r: opt.r ?? 7,
     });
   }
 
@@ -1504,6 +1533,9 @@ export default class GameScene extends Phaser.Scene {
       this.updateTutorialVisuals();
       saveGame();
     }
+    if (!e.isDummy && !opt.crit && !opt.isAura && !opt.isProc && e.T.shieldDr) {
+      amount = Math.max(1, Math.round(amount * (1 - e.T.shieldDr)));
+    }
     if (!e.isDummy) e.hp -= amount;
     e.aggro = true;
     if (e.isBoss && !this.bossActive) this.startBossFight();
@@ -1524,7 +1556,8 @@ export default class GameScene extends Phaser.Scene {
       });
     }
     const debrisCount = opt.isBasicAttack ? (opt.crit ? 5 : 3) : (opt.crit ? 10 : 5);
-    this.bloodBurst(e.fx, e.sprite.y, debrisCount, e.isDummy ? 0xc09850 : e.isBoss ? 0x9020c0 : e.type === 'gargoyle' || e.type === 'golem' ? 0x8a9095 : 0xcfc6a8);
+    const debrisTint = e.T.debrisColor ?? (e.isDummy ? 0xc09850 : e.isBoss ? (e.def?.aura || 0x9020c0) : e.type === 'gargoyle' || e.type === 'golem' ? 0x8a9095 : 0xcfc6a8);
+    this.bloodBurst(e.fx, e.sprite.y, debrisCount, debrisTint);
 
     const s = getStats();
     if (!e.isDummy && amount > 0 && !this.player.dead) {
@@ -1596,6 +1629,14 @@ export default class GameScene extends Phaser.Scene {
       }, 0xff5010, true);
     }
 
+    if (e.T.deathFrostNova) {
+      const nx = e.fx, ny = e.fy, fdmg = Math.max(2, Math.round(e.dmg * 0.65));
+      this.burst(nx, ny - 10, 18, [0x60d8ff, 0xd8f8ff], 190, 480);
+      for (let i = 0; i < 8; i++) {
+        this.spawnIceBolt(nx, ny - 10, (i / 8) * Math.PI * 2, fdmg, null, { speed: 220, silent: i > 0 });
+      }
+    }
+
     this.onEnemyKilled(e);
     if (e.isBoss) this.bossDefeated(e);
   }
@@ -1643,6 +1684,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     const diff = getDifficulty(state.difficulty);
+    const mf = s.magicFind || 0;
 
     if (Math.random() < 0.78 || e.T.elite) {
       const g = Math.max(1, Math.round(rand(e.T.gold[0], e.T.gold[1]) * (1 + e.lvl * 0.25) * (1 + s.goldFind) * diff.goldMul));
@@ -1660,8 +1702,6 @@ export default class GameScene extends Phaser.Scene {
         this.floatText(e.fx, e.sprite.y - 82, '+1 套裝精華', '#38f288', 15);
       }
     }
-
-    const mf = s.magicFind || 0;
 
     // 裝備掉落（依品質區分稀有度）
     const dropChance = e.isBoss ? 1 : Math.min(0.78, e.T.drop * (1 + mf * 0.45));
@@ -2403,6 +2443,7 @@ export default class GameScene extends Phaser.Scene {
     const p = this.player;
     p.dead = true;
     state.dead = true;
+    this.clearHostileHazards();
     p.clearMoveInputs();
     p.stop();
     this.scene.get('UI')?.resetTouchInputs?.();
@@ -2598,12 +2639,12 @@ export default class GameScene extends Phaser.Scene {
     this.vfx.spawnDebris(x, y, count, tint);
   }
 
-  slamEffect(x, y, r) {
+  slamEffect(x, y, r, tint = 0xff8030) {
     this.sfx('slam');
     this.cameras.main.shake(180, 0.006);
-    const c = this.add.circle(x, y, r, 0xff8030, 0.5).setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
+    const c = this.add.circle(x, y, r, tint, 0.5).setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({ targets: c, alpha: 0, scale: 1.2, duration: 350, onComplete: () => c.destroy() });
-    this.burst(x, y, 20, [0x8a8a8a, 0x605850], r * 2, 450);
+    this.burst(x, y, 20, [tint, 0x8a8a8a], r * 2, 450);
   }
 
   sfx(name) { Sfx.play(name); }
@@ -2898,6 +2939,7 @@ export default class GameScene extends Phaser.Scene {
     }
     this.updateWhirl(dt);
     this.updateGroundEffects(dt);
+    this.updateHostileHazards(dt);
     this.updateOrbitBlades(time, dt);
     this.updateTraps(time, dt);
     for (const e of this.enemies) e.update(dt);
@@ -3019,6 +3061,67 @@ export default class GameScene extends Phaser.Scene {
       if (ge.t >= ge.dur) {
         ge.visuals.forEach((v) => v.destroy());
         this.groundEffects.splice(i, 1);
+      }
+    }
+  }
+
+  spawnHostileHazard(x, y, r, dur, dmg, opt = {}) {
+    if (!this.hostileHazards) this.hostileHazards = [];
+    while (this.hostileHazards.length >= 8) {
+      const old = this.hostileHazards.shift();
+      old.outer?.destroy();
+      old.inner?.destroy();
+    }
+    const kind = opt.kind || 'blood_pool';
+    const colors = kind === 'frost_zone'
+      ? { fill: 0x2890d0, stroke: 0x80f0ff, glow: 0x60d8ff }
+      : kind === 'lava_patch'
+        ? { fill: 0xc83808, stroke: 0xff8820, glow: 0xff6010 }
+        : { fill: 0x8c0c1c, stroke: 0xff3048, glow: 0xd01830 };
+    const outer = this.add.circle(x, y, r, colors.fill, 0.28).setStrokeStyle(2, colors.stroke, 0.72).setDepth(2.5);
+    const inner = this.add.circle(x, y, r * 0.58, colors.glow, 0.22).setDepth(2.5);
+    this.hostileHazards.push({
+      kind, x, y, r, dur, t: 0, dmg, tickMs: opt.tickMs || 480, tickT: 180,
+      slow: opt.slow || 0, healOwner: opt.healOwner || null, outer, inner,
+    });
+  }
+
+  clearHostileHazards() {
+    if (!this.hostileHazards) return;
+    for (const h of this.hostileHazards) {
+      if (h.outer && h.outer.active) h.outer.destroy();
+      if (h.inner && h.inner.active) h.inner.destroy();
+    }
+    this.hostileHazards = [];
+  }
+
+  updateHostileHazards(dt) {
+    if (!this.hostileHazards || !this.hostileHazards.length) return;
+    const p = this.player;
+    for (let i = this.hostileHazards.length - 1; i >= 0; i--) {
+      const h = this.hostileHazards[i];
+      h.t += dt;
+      h.tickT -= dt;
+      const fade = Math.min(1, Math.max(0.15, (h.dur - h.t) / 700));
+      const pulse = 0.85 + Math.sin(this.time.now * 0.008 + i) * 0.15;
+      if (h.outer?.active) h.outer.setAlpha(0.32 * fade * pulse);
+      if (h.inner?.active) h.inner.setAlpha(0.24 * fade * pulse).setScale(0.9 + Math.sin(this.time.now * 0.01 + i) * 0.1);
+      if (h.tickT <= 0) {
+        h.tickT = h.tickMs;
+        if (!p.dead && Math.hypot(p.fx - h.x, p.fy - h.y) <= h.r + PLAYER_R) {
+          if (h.slow) p.applySlow(h.slow);
+          const dealt = this.hurtPlayer(h.dmg, h.x, h.y, h.healOwner || null);
+          if (dealt > 0 && h.kind === 'blood_pool' && h.healOwner && !h.healOwner.dead) {
+            const heal = Math.min(Math.round(h.healOwner.maxHp * 0.015), Math.max(2, Math.round(dealt * 1.4)));
+            h.healOwner.hp = Math.min(h.healOwner.maxHp, h.healOwner.hp + heal);
+            this.floatText(h.healOwner.fx, h.healOwner.sprite.y - 26, `+${heal}`, '#ff6080', 14);
+          }
+        }
+      }
+      if (h.t >= h.dur) {
+        if (h.outer?.active) h.outer.destroy();
+        if (h.inner?.active) h.inner.destroy();
+        this.hostileHazards.splice(i, 1);
       }
     }
   }

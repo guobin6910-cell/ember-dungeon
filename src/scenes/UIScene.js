@@ -1481,11 +1481,12 @@ export default class UIScene extends Phaser.Scene {
     c.add(txt(this, W / 2, Y + 282, `【${diff.name}】${diff.short}`, 13, diff.color).setOrigin(0.5));
 
     const estBossHp = Math.max(1, Math.round(bossDef.hp * Math.pow(1.42, f - 1) * diff.hpMul));
-    const box = this.add.rectangle(W / 2, Y + 368, 580, 112, 0x180e20, 0.9).setStrokeStyle(1, 0x5a3078);
+    const box = this.add.rectangle(W / 2, Y + 374, 600, 128, 0x180e20, 0.9).setStrokeStyle(1, 0x5a3078);
     c.add(box);
-    c.add(txt(this, W / 2, Y + 332, `地貌區域：${biome.name}${f >= 5 ? '（無盡深淵強化）' : ''}`, 18, '#d8c0ff').setOrigin(0.5));
-    c.add(txt(this, W / 2, Y + 362, `鎮守頭目：${bossDef.name}（預估生命 ${estBossHp}）`, 16, '#ff9888').setOrigin(0.5));
-    c.add(txt(this, W / 2, Y + 392, `難度說明：${diff.desc}`, 13, '#b8a8c8').setOrigin(0.5));
+    c.add(txt(this, W / 2, Y + 330, `地貌區域：${biome.name}${f >= 5 ? '（無盡深淵強化）' : ''}`, 18, '#d8c0ff').setOrigin(0.5));
+    c.add(txt(this, W / 2, Y + 358, `鎮守頭目：${bossDef.name}（預估生命 ${estBossHp}）`, 16, '#ff9888').setOrigin(0.5));
+    c.add(txt(this, W / 2, Y + 384, `頭目招式：${bossDef.skillSummary}`, 13, '#ffd080').setOrigin(0.5));
+    c.add(txt(this, W / 2, Y + 410, `難度說明：${diff.desc}`, 13, '#b8a8c8').setOrigin(0.5));
 
     this.portalEnterBtn = this.mkModalBtn(c, W / 2, Y + 492, 280, 52, `踏入第 ${f} 層【${diff.name}】`, 0x4a1c68, 0xd070ff, () => {
       const targetFloor = this.portalFloor;

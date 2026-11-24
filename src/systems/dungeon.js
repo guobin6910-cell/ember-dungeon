@@ -12,7 +12,7 @@ export const BIOMES = [
     dark: 0x060308,
     darkAlpha: 0.93,
     bossType: 'bone',
-    pool: ['skeleton', 'archer', 'bat', 'spider'],
+    pool: ['skeleton', 'archer', 'bat', 'spider', 'hellhound', 'bone_guard'],
     elites: ['gargoyle'],
   },
   {
@@ -24,8 +24,8 @@ export const BIOMES = [
     dark: 0x0d0205,
     darkAlpha: 0.93,
     bossType: 'blood',
-    pool: ['skeleton', 'bat', 'necromancer', 'assassin', 'spider'],
-    elites: ['gargoyle'],
+    pool: ['bat', 'necromancer', 'assassin', 'ghoul', 'blood_cultist', 'spider'],
+    elites: ['blood_knight', 'gargoyle'],
   },
   {
     id: 'frost',
@@ -36,8 +36,8 @@ export const BIOMES = [
     dark: 0x030812,
     darkAlpha: 0.93,
     bossType: 'frost',
-    pool: ['archer', 'frost_mage', 'assassin', 'necromancer'],
-    elites: ['gargoyle', 'golem'],
+    pool: ['archer', 'frost_mage', 'frost_wraith', 'bone_guard', 'assassin'],
+    elites: ['frost_titan', 'golem'],
   },
   {
     id: 'abyss',
@@ -48,8 +48,8 @@ export const BIOMES = [
     dark: 0x0a0208,
     darkAlpha: 0.94,
     bossType: 'abyss',
-    pool: ['skeleton', 'necromancer', 'assassin', 'frost_mage', 'bat', 'spider'],
-    elites: ['gargoyle', 'golem'],
+    pool: ['pyro_demon', 'hellhound', 'blood_cultist', 'assassin', 'frost_wraith', 'necromancer'],
+    elites: ['golem', 'blood_knight', 'frost_titan'],
   },
 ];
 

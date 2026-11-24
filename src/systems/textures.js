@@ -514,6 +514,170 @@ const GOLEM = [
 ];
 const GOLEM_PAL = { k: OUT, S: '#4e484a', s: '#322d2f', d: '#1e1a1b', f: '#ff6a10', e: '#ffe040' };
 
+// ---------------------------------------------------------------- 擴充地城怪物（6 普通 + 2 精英）
+const HELLHOUND = [
+  'ff.......kk...',
+  '.FF.....kddk..',
+  '.fFkkkkkdddYYk',
+  '..fFFddddddddk',
+  '...kdddddddddk',
+  '...kddFddddddk',
+  '...kddddkkkkk.',
+  '..kddk..kddk..',
+  '..kffk..kffk..',
+  '..kkk...kkk...',
+];
+const HELLHOUND_PAL = { k: OUT, d: '#4d2a24', f: '#ff6814', F: '#ffb838', Y: '#fff060' };
+
+const BONE_GUARD = [
+  '....kkkk....',
+  '...kSSsSk...',
+  '..kSssssSk..',
+  '..kskeeksk..',
+  '..kskwwksk..',
+  '...kwwwwk...',
+  '.kkAAAAAAkk.',
+  'kSSkwwwwkMMk',
+  'kSskwkkwkMmk',
+  'ksskwwwwkMyk',
+  '.kkkaaaakMmk',
+  '..kSaaaakMMk',
+  '...kss.ssk..',
+  '...kss.ssk..',
+  '..kkk..kkk..',
+  '............',
+];
+const BONE_GUARD_PAL = { k: OUT, S: '#9aa4b0', s: '#626a74', e: '#ff4830', w: '#dfd8c0', A: '#484e58', a: '#30343c', M: '#7a8490', m: '#4c545e', y: '#e0b030' };
+
+const BLOOD_CULTIST = [
+  '....rrrr....',
+  '...rRRRRr...',
+  '..rRddddRr..',
+  '..rRdeedRr.b',
+  '..rRddddRr.k',
+  '...rrrrry.bk',
+  '....krrk..k.',
+  '..kkyrrkkkb.',
+  '.krRrRRrRkk.',
+  '.krrkrrkrrk.',
+  '..k.kRRk.k..',
+  '....krrk....',
+  '...kr..rk...',
+  '...kr..rk...',
+  '..kkr..rkk..',
+  '............',
+];
+const BLOOD_CULTIST_PAL = { k: OUT, r: '#781022', R: '#a81c34', d: '#1a080c', e: '#ff5068', y: '#e0b040', b: '#ff3048' };
+
+const GHOUL = [
+  '............',
+  '...kkkkkk...',
+  '..kggggggk..',
+  '..kgeegggk..',
+  '..kgkbbkgk..',
+  '...kggggk...',
+  '.kkbggggbkk.',
+  'kggkggggkggk',
+  'kbbkggggkbbk',
+  'rk.kgbbgk.kr',
+  'r..kggggk..r',
+  '...kggggk...',
+  '...kgg.ggk..',
+  '..kggk.kggk.',
+  '..kbb...bbk.',
+  '............',
+];
+const GHOUL_PAL = { k: OUT, g: '#8a7e78', e: '#ff3838', b: '#b81c2c', r: '#e02838' };
+
+const FROST_WRAITH = [
+  '....cccc....',
+  '...cCCCCc...',
+  '..cCddddCc..',
+  '..cCdwwdCc..',
+  '..cCddddCc..',
+  '..kcCCCCck..',
+  '.kcCCccCCck.',
+  'kCCccccccCCk',
+  'kc.kcCCck.ck',
+  '...kcCCck...',
+  '..kccCCcck..',
+  '..kc.cc.ck..',
+  '...c.cc.c...',
+  '....c..c....',
+  '.....c......',
+  '............',
+];
+const FROST_WRAITH_PAL = { k: '#0c1c28', c: '#60b8e8', C: '#2a6288', d: '#102434', w: '#d8f8ff' };
+
+const PYRO_DEMON = [
+  '.h........h.',
+  '.hh.kkkk.hh.',
+  '..hkRRRRkh..',
+  '..kRrYYrRk..',
+  '...kRRRRk...',
+  '..kkddddkk..',
+  '.kddkffkddk.',
+  'fddkRFFRkddf',
+  'ff.kRffRk.ff',
+  '...kddddk...',
+  '...kdRRdk...',
+  '..kdd..ddk..',
+  '..kdk..kdk..',
+  '..kfk..kfk..',
+  '..kkk..kkk..',
+  '............',
+];
+const PYRO_DEMON_PAL = { k: OUT, h: '#dfd0a8', R: '#8c2220', r: '#561214', d: '#361418', Y: '#ffe840', f: '#ff6a10', F: '#ffd040' };
+
+const BLOOD_KNIGHT = [
+  '.h............h.',
+  '.hh..kkkkkk..hh.',
+  '..hhkRRRRRRkhh..',
+  '...kRddddddRk...',
+  '...kRdYYYYdRk...',
+  '....kddddddk..WR',
+  '.kkkyRRRRRRykkWR',
+  'kRRkRryyyyrRkWRk',
+  'krrkRrrrrrrRkyk.',
+  '.kkkrRRRRRRrkkk.',
+  '...krddddddrk...',
+  '...kRddddddRk...',
+  '...krRkkRrrk....',
+  '...krrk.krrk....',
+  '..kRRRk.kRRRk...',
+  '..kkkk...kkkk...',
+];
+const BLOOD_KNIGHT_PAL = { k: '#0a0406', h: '#e8d4b0', R: '#b82038', r: '#6a1222', d: '#260a10', Y: '#ffe050', y: '#e0b040', W: '#ffd0d8' };
+
+const FROST_TITAN = [
+  '.w............w.',
+  'wI...kkkkkk...Iw',
+  'II.kkIIIIIIkk.II',
+  'IkIIiibbbbiIIkII',
+  '.kIiiwbbbbwiiIk.',
+  '..kIIbbbbbbIIk..',
+  'wIkkkIIIIIIkkkIw',
+  'IIkIiIwwwwIiIkII',
+  'IikIiiwbbwiiIkII',
+  'kkkIIibbbbiiIkkk',
+  '..kIIiiiiiiIIk..',
+  '...kIIbbbbIIk...',
+  '...kIIk..kIIk...',
+  '...kIik..kiIk...',
+  '..kIIIk..kIIIk..',
+  '..kkkk....kkkk..',
+];
+const FROST_TITAN_PAL = { k: '#081420', I: '#4c8cc0', i: '#88d8f8', b: '#22486c', w: '#d8f8ff' };
+
+const BONE_SPEAR = [
+  '........kk..',
+  '.kkkkkkkkwk.',
+  'kbbbbbrbWWwk',
+  '.kkkkkkkkwk.',
+  '........kk..',
+];
+const BONE_SPEAR_PAL = { k: OUT, b: '#c8bea0', r: '#b02820', w: '#ebe4d0', W: '#ffffff' };
+
 // ---------------------------------------------------------------- Boss 變體（3 種新外觀）
 const BOSS_BONE = [
   'h..................h',
@@ -1179,6 +1343,15 @@ export function generateTextures(scene) {
   pixTex(scene, 'frost_mage', FROST_MAGE, FROST_PAL);
   pixTex(scene, 'golem', GOLEM, GOLEM_PAL, 4);
   pixTex(scene, 'spider', SPIDER, SPIDER_PAL);
+  pixTex(scene, 'hellhound', HELLHOUND, HELLHOUND_PAL);
+  pixTex(scene, 'bone_guard', BONE_GUARD, BONE_GUARD_PAL);
+  pixTex(scene, 'blood_cultist', BLOOD_CULTIST, BLOOD_CULTIST_PAL);
+  pixTex(scene, 'ghoul', GHOUL, GHOUL_PAL);
+  pixTex(scene, 'frost_wraith', FROST_WRAITH, FROST_WRAITH_PAL);
+  pixTex(scene, 'pyro_demon', PYRO_DEMON, PYRO_DEMON_PAL);
+  pixTex(scene, 'blood_knight', BLOOD_KNIGHT, BLOOD_KNIGHT_PAL, 4);
+  pixTex(scene, 'frost_titan', FROST_TITAN, FROST_TITAN_PAL, 4);
+  pixTex(scene, 'bonespear', BONE_SPEAR, BONE_SPEAR_PAL);
 
   pixTex(scene, 'prop_chest', PROP_CHEST, CHEST_PAL);
   pixTex(scene, 'prop_chest_open', PROP_CHEST_OPEN, CHEST_PAL);
@@ -1243,6 +1416,7 @@ export function generateTextures(scene) {
   radial(scene, 'orb', 32, [[0, '#ffe0ff'], [0.3, '#d050ff'], [0.65, 'rgba(120,10,180,0.8)'], [1, 'rgba(60,0,100,0)']]);
   radial(scene, 'icebolt', 32, [[0, '#ffffff'], [0.3, '#90f8ff'], [0.65, 'rgba(40,160,255,0.85)'], [1, 'rgba(20,80,200,0)']]);
   radial(scene, 'bloodbolt', 32, [[0, '#ffd8d8'], [0.3, '#ff4050'], [0.65, 'rgba(170,10,25,0.85)'], [1, 'rgba(80,0,10,0)']]);
+  radial(scene, 'voidbolt', 32, [[0, '#ffffff'], [0.28, '#e070ff'], [0.62, 'rgba(130,20,210,0.88)'], [1, 'rgba(50,0,90,0)']]);
   radial(scene, 'webbolt', 24, [[0, '#ffffff'], [0.4, 'rgba(220,230,240,0.9)'], [1, 'rgba(180,190,200,0)']]);
   radial(scene, 'portal_tex', 96, [[0, '#ffffff'], [0.22, '#c880ff'], [0.55, 'rgba(110,30,220,0.7)'], [0.82, 'rgba(40,10,100,0.25)'], [1, 'rgba(0,0,0,0)']]);
   radial(scene, 'shadowtex', 64, [[0, 'rgba(0,0,0,0.6)'], [0.7, 'rgba(0,0,0,0.35)'], [1, 'rgba(0,0,0,0)']]);
